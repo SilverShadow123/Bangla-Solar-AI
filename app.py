@@ -1,4 +1,3 @@
-
 import streamlit as st
 from langchain_core.messages import HumanMessage
 
@@ -7,12 +6,11 @@ from services.report_service import (
     generate_solar_report,
     generate_solar_report_pdf,
 )
-from services.agent_service import run_solar_agent
+from services.agent_service import (
+    build_assessment_context,
+    run_solar_agent,
+)
 
-
-# --------------------------------------------------
-# PAGE CONFIGURATION
-# --------------------------------------------------
 
 st.set_page_config(
     page_title="Bangla Solar AI",
@@ -23,10 +21,6 @@ st.set_page_config(
 st.title("☀️ Bangla Solar AI")
 st.caption("বাংলায় আপনার ছাদের সৌরবিদ্যুৎ সম্ভাব্যতা যাচাই করুন")
 
-
-# --------------------------------------------------
-# SESSION STATE
-# --------------------------------------------------
 
 if "chat_history" not in st.session_state:
     st.session_state["chat_history"] = []
@@ -43,10 +37,9 @@ if "report" not in st.session_state:
 if "assessment_inputs" not in st.session_state:
     st.session_state["assessment_inputs"] = None
 
+if "report_pdf" not in st.session_state:
+    st.session_state["report_pdf"] = None
 
-# --------------------------------------------------
-# SIDEBAR: SOLAR ASSESSMENT
-# --------------------------------------------------
 
 with st.sidebar:
     st.header("Solar Assessment")
@@ -111,10 +104,6 @@ with st.sidebar:
         st.rerun()
 
 
-# --------------------------------------------------
-# RUN SOLAR ASSESSMENT
-# --------------------------------------------------
-
 if assess_clicked:
     if not location.strip():
         st.warning("Please enter your location.")
@@ -145,11 +134,10 @@ if assess_clicked:
                 language=report_language,
             )
 
-            # Save the assessment result and generated report.
             st.session_state["assessment"] = result
             st.session_state["report"] = report
+            st.session_state["report_pdf"] = None
 
-            # Save the exact inputs used for this assessment.
             st.session_state["assessment_inputs"] = {
                 "location": location,
                 "monthly_bill_bdt": monthly_bill,
@@ -166,10 +154,6 @@ if assess_clicked:
         except (ValueError, RuntimeError) as error:
             st.error(str(error))
 
-
-# --------------------------------------------------
-# DISPLAY SOLAR ASSESSMENT
-# --------------------------------------------------
 
 if st.session_state["assessment"] is not None:
     result = st.session_state["assessment"]
@@ -194,9 +178,53 @@ if st.session_state["assessment"] is not None:
         f"৳{result['cost']['total_cost_bdt']:,.0f}",
     )
 
-    # --------------------------------------------------
-    # ENERGY ASSESSMENT
-    # --------------------------------------------------
+    savings = result.get("savings")
+    sizing = result.get("sizing")
+
+    if savings:
+        st.subheader("Savings and Payback")
+
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric(
+            "Monthly Savings",
+            f"৳{savings['monthly_savings_bdt']:,.0f}",
+        )
+
+        col2.metric(
+            "Bill After Solar",
+            f"৳{savings['monthly_bill_after_bdt']:,.0f}",
+            delta=f"-৳{savings['monthly_savings_bdt']:,.0f}",
+            delta_color="inverse",
+        )
+
+        payback = savings.get("payback_years")
+
+        col3.metric(
+            "Simple Payback",
+            f"{payback:,.1f} years" if payback is not None else "N/A",
+        )
+
+        if sizing and sizing["limiting_factor"] == "roof_area":
+            st.info(
+                "Your roof can hold "
+                f"{sizing['roof_limit_kw']} kW, which is less than the "
+                f"{sizing['demand_based_kw']} kW needed to cover your "
+                "average consumption, so the system is sized to the roof."
+            )
+        elif sizing:
+            st.info(
+                f"The system is sized to cover your average consumption "
+                f"({sizing['demand_based_kw']} kW). Your roof could hold "
+                f"up to {sizing['roof_limit_kw']} kW."
+            )
+
+        if savings.get("payback_years_including_battery") is not None:
+            st.caption(
+                "Payback with the backup battery included: "
+                f"{savings['payback_years_including_battery']:,.1f} years. "
+                "A backup battery does not reduce your bill."
+            )
 
     energy = result.get("energy_assessment")
 
@@ -241,57 +269,52 @@ if st.session_state["assessment"] is not None:
                 "matches household consumption."
             )
 
-    # --------------------------------------------------
-    # DETAILED FEASIBILITY REPORT
-    # --------------------------------------------------
-
     st.subheader("Feasibility Report")
     st.markdown(report)
 
-    # --------------------------------------------------
-    # PDF DOWNLOAD
-    # --------------------------------------------------
+    if st.session_state["report_pdf"] is None:
+        try:
+            st.session_state["report_pdf"] = generate_solar_report_pdf(
+                report=report,
+                assessment=result,
+                assessment_inputs=(
+                    st.session_state["assessment_inputs"]
+                ),
+            )
 
-    try:
-        pdf_data = generate_solar_report_pdf(
-            report=report,
-            assessment=result,
-            assessment_inputs=(
-                st.session_state["assessment_inputs"]
-            ),
+        except (ValueError, RuntimeError, OSError) as error:
+            st.error(
+                f"Could not generate the PDF report: {error}"
+            )
+
+    if st.session_state["report_pdf"] is not None:
+        _version = tuple(
+            int(part)
+            for part in st.__version__.split(".")[:2]
+            if part.isdigit()
+        )
+        _download_options = (
+            {"on_click": "ignore"} if _version >= (1, 43) else {}
         )
 
         st.download_button(
             label="📄 Download Report (PDF)",
-            data=pdf_data,
+            data=st.session_state["report_pdf"],
             file_name="bangla_solar_report.pdf",
             mime="application/pdf",
             use_container_width=True,
             key="download_solar_report_pdf",
+            **_download_options,
         )
-
-    except (ValueError, RuntimeError, OSError) as error:
-        st.error(
-            f"Could not generate the PDF report: {error}"
-        )
-
-    # --------------------------------------------------
-    # ASSUMPTIONS AND LIMITATIONS
-    # --------------------------------------------------
 
     with st.expander("View assumptions and limitations"):
         for limitation in result.get("limitations", []):
             st.write(f"- {limitation}")
 
 
-# --------------------------------------------------
-# CHAT INTERFACE
-# --------------------------------------------------
-
 st.divider()
 st.subheader("Ask Bangla Solar AI")
 
-# Display previous conversation.
 for message in st.session_state["chat_history"]:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -301,12 +324,7 @@ user_input = st.chat_input(
 )
 
 
-# --------------------------------------------------
-# CHAT: LANGGRAPH AGENT + MEMORY + TOOL TRACE
-# --------------------------------------------------
-
 if user_input:
-    # Save and display the user's message.
     st.session_state["chat_history"].append(
         {
             "role": "user",
@@ -317,7 +335,6 @@ if user_input:
     with st.chat_message("user"):
         st.markdown(user_input)
 
-    # Include previous LangChain messages for agent memory.
     current_messages = (
         st.session_state["agent_messages"]
         + [HumanMessage(content=user_input)]
@@ -326,14 +343,19 @@ if user_input:
     try:
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
-                result = run_solar_agent(current_messages)
+                agent_result = run_solar_agent(
+                    current_messages,
+                    assessment_context=build_assessment_context(
+                        st.session_state["assessment"],
+                        st.session_state["assessment_inputs"],
+                    ),
+                )
 
-            # Preserve agent messages and tool interactions.
             st.session_state["agent_messages"] = (
-                current_messages + result["messages"]
+                current_messages + agent_result["messages"]
             )
 
-            answer = result["answer"]
+            answer = agent_result["answer"]
 
             if answer:
                 st.markdown(answer)
@@ -344,13 +366,9 @@ if user_input:
                 )
                 st.warning(answer)
 
-            # --------------------------------------------------
-            # AGENT EXECUTION TRACE
-            # --------------------------------------------------
-
-            tool_calls = result["tool_calls"]
-            tool_results = result["tool_results"]
-            node_events = result["node_events"]
+            tool_calls = agent_result["tool_calls"]
+            tool_results = agent_result["tool_results"]
+            node_events = agent_result["node_events"]
 
             with st.expander(
                 f"🔧 Agent Execution Trace "
@@ -390,7 +408,6 @@ if user_input:
                         st.caption("Tool result")
                         st.code(item["result"])
 
-                # Find results without a matching tool-call ID.
                 matched_ids = {
                     item["tool_call_id"]
                     for call in tool_calls
@@ -414,7 +431,6 @@ if user_input:
                         st.write(f"Tool: `{item['name']}`")
                         st.code(item["result"])
 
-        # Save the assistant response in the visible chat history.
         st.session_state["chat_history"].append(
             {
                 "role": "assistant",

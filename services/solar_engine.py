@@ -1,10 +1,12 @@
-
-from tools.solar_generation import calculate_solar_generation
 from tools.battery_sizing import calculate_battery_size
 from tools.bill_analysis import estimate_monthly_consumption
 from tools.cost_estimation import estimate_solar_cost
-from tools.location import get_location_coordinates
-from tools.solar_resource import get_solar_resource
+from tools.pv_yield import get_location_yield
+from tools.solar_economics import calculate_savings_and_payback
+from tools.system_sizing import size_solar_system
+
+
+BALANCE_TOLERANCE = 0.05
 
 
 def assess_solar_feasibility(
@@ -14,8 +16,17 @@ def assess_solar_feasibility(
     needs_battery: bool = False,
     backup_load_kw: float = 0.5,
     backup_hours: float = 4.0,
+    target_offset_fraction: float = 1.0,
 ) -> dict:
-    """Create a preliminary, location-aware solar assessment."""
+    """Create a preliminary, location-aware solar feasibility assessment.
+
+    The system is sized to offset the household's consumption, limited
+    by what the roof can hold, then costed, and its bill savings and
+    payback are estimated under the BERC slab tariff.
+    """
+
+    if monthly_bill_bdt <= 0:
+        raise ValueError("Monthly bill must be greater than zero.")
 
     if roof_area_sqm <= 0:
         raise ValueError("Roof area must be greater than zero.")
@@ -24,54 +35,39 @@ def assess_solar_feasibility(
         raise ValueError("Location is required.")
 
     bill = estimate_monthly_consumption(monthly_bill_bdt)
+    monthly_consumption_kwh = bill["monthly_consumption_kwh"]
 
-    usable_roof_area = roof_area_sqm * 0.70
-    solar_capacity_kw = usable_roof_area / 10
+    place = get_location_yield(location)
+    yearly_yield_per_kw = place["yearly_kwh_per_kw"]
 
-    coordinates = get_location_coordinates(location)
-
-    if not coordinates["found"]:
-        raise ValueError(
-            f"Could not find the location: {location}"
-        )
-
-    solar_resource = get_solar_resource(
-        latitude=coordinates["latitude"],
-        longitude=coordinates["longitude"],
+    sizing = size_solar_system(
+        roof_area_sqm=roof_area_sqm,
+        monthly_consumption_kwh=monthly_consumption_kwh,
+        yearly_yield_kwh_per_kw=yearly_yield_per_kw,
+        target_offset_fraction=target_offset_fraction,
     )
 
-    reference_annual_kwh = solar_resource[
-        "estimated_yearly_generation_kwh"
-    ]
+    solar_capacity_kw = sizing["recommended_capacity_kw"]
 
-    estimated_annual_kwh = (
-        reference_annual_kwh * solar_capacity_kw
-    )
+    estimated_annual_kwh = yearly_yield_per_kw * solar_capacity_kw
 
     generation = {
-        "capacity_kw": round(solar_capacity_kw, 2),
-        "daily_generation_kwh": round(
-            estimated_annual_kwh / 365, 2
-        ),
-        "monthly_generation_kwh": round(
-            estimated_annual_kwh / 12, 2
-        ),
-        "yearly_generation_kwh": round(
-            estimated_annual_kwh, 2
-        ),
-        "data_source": solar_resource["data_source"],
+        "capacity_kw": solar_capacity_kw,
+        "yearly_yield_kwh_per_kw": round(yearly_yield_per_kw, 2),
+        "daily_generation_kwh": round(estimated_annual_kwh / 365, 2),
+        "monthly_generation_kwh": round(estimated_annual_kwh / 12, 2),
+        "yearly_generation_kwh": round(estimated_annual_kwh, 2),
+        "data_source": place["data_source"],
         "is_estimate": True,
     }
 
-    monthly_generation_kwh = generation["monthly_generation_kwh"]
-    monthly_consumption_kwh = bill["monthly_consumption_kwh"]
+    monthly_generation_kwh = estimated_annual_kwh / 12
 
     energy_balance_kwh = round(
-        monthly_generation_kwh - monthly_consumption_kwh,
-        2,
+        monthly_generation_kwh - monthly_consumption_kwh, 2
     )
 
-    if energy_balance_kwh > 0:
+    if energy_balance_kwh > BALANCE_TOLERANCE * monthly_consumption_kwh:
         energy_assessment = {
             "status": "potential_surplus",
             "monthly_surplus_kwh": energy_balance_kwh,
@@ -80,7 +76,7 @@ def assess_solar_feasibility(
                 "estimated household consumption."
             ),
         }
-    elif energy_balance_kwh < 0:
+    elif energy_balance_kwh < -BALANCE_TOLERANCE * monthly_consumption_kwh:
         energy_assessment = {
             "status": "potential_shortfall",
             "monthly_shortfall_kwh": abs(energy_balance_kwh),
@@ -92,13 +88,12 @@ def assess_solar_feasibility(
     else:
         energy_assessment = {
             "status": "approximately_balanced",
-            "monthly_difference_kwh": 0.0,
+            "monthly_difference_kwh": energy_balance_kwh,
             "message": (
                 "Estimated solar generation approximately "
                 "matches household consumption."
             ),
         }
-
 
     battery = None
 
@@ -108,46 +103,69 @@ def assess_solar_feasibility(
             backup_hours=backup_hours,
         )
 
-    battery_capacity_kwh = (
-        battery["battery_capacity_kwh"]
-        if battery
-        else 0
-    )
+    battery_capacity_kwh = battery["battery_capacity_kwh"] if battery else 0
 
     cost = estimate_solar_cost(
         capacity_kw=solar_capacity_kw,
         battery_capacity_kwh=battery_capacity_kwh,
     )
 
+    savings = calculate_savings_and_payback(
+        monthly_consumption_kwh=monthly_consumption_kwh,
+        monthly_generation_kwh=monthly_generation_kwh,
+        solar_cost_bdt=cost["solar_cost_bdt"],
+        battery_cost_bdt=cost["battery_cost_bdt"],
+    )
+
+    limitations = [
+        "Solar generation is estimated using PVGIS data "
+        "for the resolved coordinates.",
+        "Annual generation divided by 12 is an average, "
+        "not a month-specific forecast.",
+        "Roof shading, orientation, tilt, and structural "
+        "suitability have not been inspected.",
+        "Electricity consumption is estimated by inverting the BERC "
+        "residential slab tariff; demand charges and other fees "
+        "are not included.",
+        "Equipment costs are illustrative, not verified "
+        "current quotations.",
+        "Actual output depends on installation and "
+        "weather conditions.",
+        "Roof capacity assumes about 5.5 m² per kW of panels "
+        "and 70% usable roof area.",
+        "Savings assume exported surplus has no cash value; only "
+        "generation up to monthly consumption reduces the bill.",
+        "Savings use average monthly figures; seasonal variation "
+        "in consumption and generation is not modelled.",
+        "Payback ignores tariff changes, panel degradation, "
+        "maintenance, financing, and battery replacement.",
+    ]
+
+    if sizing["limiting_factor"] == "roof_area":
+        limitations.append(
+            "The system size is limited by available roof area, "
+            "so it will not cover all household consumption."
+        )
+    else:
+        limitations.append(
+            "The system is sized to cover average household "
+            "consumption; the roof could hold a larger system."
+        )
+
     return {
-        "location": coordinates["location"],
-        "latitude": coordinates["latitude"],
-        "longitude": coordinates["longitude"],
+        "location": place["location"],
+        "latitude": place["latitude"],
+        "longitude": place["longitude"],
         "energy_assessment": energy_assessment,
         "roof_area_sqm": roof_area_sqm,
-        "usable_roof_area_sqm": round(
-            usable_roof_area, 2
-        ),
-        "solar_capacity_kw": round(
-            solar_capacity_kw, 2
-        ),
+        "usable_roof_area_sqm": sizing["usable_roof_area_sqm"],
+        "solar_capacity_kw": solar_capacity_kw,
+        "sizing": sizing,
         "electricity": bill,
         "generation": generation,
-        "solar_resource": solar_resource,
+        "solar_resource": place["solar_resource"],
         "battery": battery,
         "cost": cost,
-        "limitations": [
-            "Solar generation is estimated using PVGIS data "
-            "for the resolved coordinates.",
-            "Annual generation divided by 12 is an average, "
-            "not a month-specific forecast.",
-            "Roof shading, orientation, tilt, and structural "
-            "suitability have not been inspected.",
-            "Electricity consumption is estimated using an "
-            "assumed rate, not the actual tariff calculation.",
-            "Equipment costs are illustrative, not verified "
-            "current quotations.",
-            "Actual output depends on installation and "
-            "weather conditions.",
-        ],
+        "savings": savings,
+        "limitations": limitations,
     }

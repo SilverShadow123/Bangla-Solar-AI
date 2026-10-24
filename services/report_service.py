@@ -6,10 +6,6 @@ from pathlib import Path
 from fpdf import FPDF
 
 
-# ==========================================================
-# FONT CONFIGURATION
-# ==========================================================
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FONT_DIR = PROJECT_ROOT / "assets" / "fonts"
 
@@ -35,10 +31,6 @@ def _validate_fonts():
         )
 
 
-# ==========================================================
-# SOLAR FEASIBILITY REPORT
-# ==========================================================
-
 def generate_solar_report(
     result: dict,
     language: str = "en",
@@ -58,6 +50,9 @@ def generate_solar_report(
         limitations_label = "সীমাবদ্ধতা"
         yearly_generation_label = "আনুমানিক বার্ষিক বিদ্যুৎ উৎপাদন"
         daily_generation_label = "আনুমানিক দৈনিক বিদ্যুৎ উৎপাদন"
+        savings_label = "আনুমানিক মাসিক সঞ্চয়"
+        payback_label = "আনুমানিক পে-ব্যাক সময়"
+        years_unit = "বছর"
 
         disclaimer = (
             "এটি একটি প্রাথমিক অনুমান। ইনস্টলেশনের আগে "
@@ -65,6 +60,34 @@ def generate_solar_report(
         )
 
         limitation_translations = {
+            "Electricity consumption is estimated by inverting the BERC residential slab tariff; demand charges and other fees are not included.":
+                "বিদ্যুৎ ব্যবহার BERC আবাসিক স্ল্যাব ট্যারিফ থেকে "
+                "অনুমান করা হয়েছে; ডিমান্ড চার্জসহ অন্যান্য ফি ধরা হয়নি।",
+
+            "Roof capacity assumes about 5.5 m² per kW of panels and 70% usable roof area.":
+                "ছাদের ধারণক্ষমতা প্রতি কিলোওয়াটে প্রায় ৫.৫ বর্গমিটার "
+                "এবং ছাদের ৭০% ব্যবহারযোগ্য ধরে হিসাব করা হয়েছে।",
+
+            "Savings assume exported surplus has no cash value; only generation up to monthly consumption reduces the bill.":
+                "সঞ্চয়ের হিসাবে উদ্বৃত্ত বিদ্যুতের কোনো নগদ মূল্য ধরা হয়নি; "
+                "মাসিক ব্যবহার পর্যন্ত উৎপাদনই বিল কমায়।",
+
+            "Savings use average monthly figures; seasonal variation in consumption and generation is not modelled.":
+                "সঞ্চয় গড় মাসিক হিসাবে নির্ণয় করা হয়েছে; ব্যবহার ও "
+                "উৎপাদনের মৌসুমি তারতম্য ধরা হয়নি।",
+
+            "Payback ignores tariff changes, panel degradation, maintenance, financing, and battery replacement.":
+                "পে-ব্যাক হিসাবে ট্যারিফ পরিবর্তন, প্যানেলের ক্ষয়, "
+                "রক্ষণাবেক্ষণ, ঋণের সুদ ও ব্যাটারি প্রতিস্থাপন ধরা হয়নি।",
+
+            "The system size is limited by available roof area, so it will not cover all household consumption.":
+                "ছাদের জায়গা সীমিত হওয়ায় সিস্টেমের আকার সীমিত; এটি "
+                "পরিবারের পুরো বিদ্যুৎ ব্যবহার পূরণ করবে না।",
+
+            "The system is sized to cover average household consumption; the roof could hold a larger system.":
+                "সিস্টেমটি পরিবারের গড় বিদ্যুৎ ব্যবহার পূরণের জন্য নির্ধারিত; "
+                "ছাদে আরও বড় সিস্টেম বসানো সম্ভব।",
+
             "Solar generation is estimated using PVGIS data for the resolved coordinates.":
                 "নির্ধারিত স্থানাঙ্কের জন্য PVGIS তথ্য ব্যবহার করে "
                 "সৌরবিদ্যুৎ উৎপাদন অনুমান করা হয়েছে।",
@@ -121,6 +144,9 @@ def generate_solar_report(
         limitations_label = "Limitations"
         yearly_generation_label = "Estimated yearly generation"
         daily_generation_label = "Estimated daily generation"
+        savings_label = "Estimated monthly savings"
+        payback_label = "Estimated payback period"
+        years_unit = "years"
 
         disclaimer = (
             "This is a preliminary estimate. Consult a qualified "
@@ -161,6 +187,20 @@ def generate_solar_report(
         f"৳{cost['total_cost_bdt']:,.2f}",
     ])
 
+    savings = result.get("savings")
+
+    if savings:
+        lines.append(
+            f"- **{savings_label}:** "
+            f"৳{savings['monthly_savings_bdt']:,.0f}"
+        )
+
+        if savings.get("payback_years") is not None:
+            lines.append(
+                f"- **{payback_label}:** "
+                f"{savings['payback_years']:.1f} {years_unit}"
+            )
+
     if battery:
         lines.append(
             f"- **{battery_label}:** "
@@ -178,10 +218,6 @@ def generate_solar_report(
 
     return "\n".join(lines)
 
-
-# ==========================================================
-# PDF DOCUMENT
-# ==========================================================
 
 class SolarReportPDF(FPDF):
     """A4 report with Unicode fonts and Bangla text shaping."""
@@ -312,10 +348,6 @@ class SolarReportPDF(FPDF):
         self.set_xy(x, y + row_height)
 
 
-# ==========================================================
-# FORMATTING HELPERS
-# ==========================================================
-
 def _format_number(value, decimals=2):
     """Format numeric values for display."""
 
@@ -347,10 +379,6 @@ def _clean_markdown(text):
 
     return text.strip()
 
-
-# ==========================================================
-# MARKDOWN TO PDF
-# ==========================================================
 
 def _markdown_to_pdf(pdf, report):
     """Render headings, lists, blockquotes, tables and paragraphs."""
@@ -513,10 +541,6 @@ def _markdown_to_pdf(pdf, report):
         )
 
 
-# ==========================================================
-# ASSESSMENT SUMMARY
-# ==========================================================
-
 def _build_assessment_summary(
     pdf,
     assessment,
@@ -580,6 +604,20 @@ def _build_assessment_summary(
             ),
         ),
     ]
+
+    savings = assessment.get("savings") or {}
+
+    if savings.get("monthly_savings_bdt") is not None:
+        summary_rows.append((
+            "Monthly Savings",
+            f"BDT {_format_number(savings['monthly_savings_bdt'], 0)}",
+        ))
+
+    if savings.get("payback_years") is not None:
+        summary_rows.append((
+            "Simple Payback",
+            f"{_format_number(savings['payback_years'], 1)} years",
+        ))
 
     for label, value in summary_rows:
         pdf.bordered_key_value(label, value)
@@ -694,10 +732,6 @@ def _build_assessment_summary(
     pdf.section_title("Feasibility Report", size=12)
 
 
-# ==========================================================
-# PDF GENERATION
-# ==========================================================
-
 def generate_solar_report_pdf(
     report: str,
     assessment: dict | None = None,
@@ -736,7 +770,6 @@ def generate_solar_report_pdf(
         margin=18,
     )
 
-    # Register embedded Unicode fonts.
     pdf.add_font(
         family="Noto",
         style="",
@@ -749,7 +782,6 @@ def generate_solar_report_pdf(
         fname=str(BOLD_FONT),
     )
 
-    # Enable HarfBuzz shaping for Bangla conjuncts and vowel signs.
     pdf.set_text_shaping(
         use_shaping_engine=True,
         script="Beng",
@@ -774,5 +806,4 @@ def generate_solar_report_pdf(
         report=report,
     )
 
-    # fpdf2 returns PDF data as a bytearray.
     return bytes(pdf.output())

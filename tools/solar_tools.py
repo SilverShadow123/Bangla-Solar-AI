@@ -1,41 +1,91 @@
-
 from langchain_core.tools import tool
 
-from tools.solar_generation import calculate_solar_generation
+from services.solar_engine import assess_solar_feasibility
 from tools.battery_sizing import calculate_battery_size
 from tools.bill_analysis import estimate_monthly_consumption
 from tools.cost_estimation import estimate_solar_cost
+from tools.pv_yield import get_location_yield
+from tools.solar_economics import calculate_savings_and_payback
 from tools.solar_resource import get_solar_resource
-from tools.location import get_location_coordinates
+from tools.tariff import calculate_bill
 
+
+def _safe(function, **kwargs) -> dict:
+    """Run a calculation and return errors as data."""
+
+    try:
+        return function(**kwargs)
+    except (ValueError, RuntimeError) as error:
+        return {"error": str(error)}
 
 
 @tool
-def solar_generation_tool(
-    capacity_kw: float,
-    peak_sun_hours: float = 4.5,
-    system_efficiency: float = 0.80,
+def assess_solar_tool(
+    location: str,
+    monthly_bill_bdt: float,
+    roof_area_sqm: float,
+    needs_battery: bool = False,
+    backup_load_kw: float = 0.5,
+    backup_hours: float = 4.0,
 ) -> dict:
-    """Estimate daily and monthly solar generation in kWh.
+    """Run the full rooftop solar feasibility assessment.
 
-    Args:
-        capacity_kw: Solar system capacity in kW.
-        peak_sun_hours: Average equivalent peak sun hours per day.
-        system_efficiency: System efficiency as a decimal,
-            such as 0.80 for 80% or 0.90 for 90%.
+    Uses the same engine as the app's Assess button: sizes the system
+    from roof area and consumption, estimates PVGIS-based generation,
+    cost, monthly bill savings and payback. Call this when the user
+    asks "what if" about a different bill, roof area, location or
+    battery setting.
     """
-    return calculate_solar_generation(
-        capacity_kw=capacity_kw,
-        peak_sun_hours=peak_sun_hours,
-        system_efficiency=system_efficiency,
+
+    return _safe(
+        assess_solar_feasibility,
+        monthly_bill_bdt=monthly_bill_bdt,
+        roof_area_sqm=roof_area_sqm,
+        location=location,
+        needs_battery=needs_battery,
+        backup_load_kw=backup_load_kw,
+        backup_hours=backup_hours,
     )
 
+
+def _generation_for_location(capacity_kw: float, location: str) -> dict:
+    if capacity_kw <= 0:
+        raise ValueError("Solar capacity must be greater than zero.")
+
+    place = get_location_yield(location)
+    yearly = place["yearly_kwh_per_kw"] * capacity_kw
+
+    return {
+        "location": place["location"],
+        "capacity_kw": capacity_kw,
+        "yearly_yield_kwh_per_kw": place["yearly_kwh_per_kw"],
+        "daily_generation_kwh": round(yearly / 365, 2),
+        "monthly_generation_kwh": round(yearly / 12, 2),
+        "yearly_generation_kwh": round(yearly, 2),
+        "data_source": place["data_source"],
+        "is_estimate": True,
+    }
+
+
+@tool
+def solar_generation_tool(capacity_kw: float, location: str) -> dict:
+    """Estimate daily, monthly and yearly generation in kWh for a system
+    of the given capacity at a location in Bangladesh, using PVGIS data
+    (the same data as the main assessment)."""
+
+    return _safe(
+        _generation_for_location,
+        capacity_kw=capacity_kw,
+        location=location,
+    )
 
 
 @tool
 def battery_sizing_tool(load_kw: float, backup_hours: float) -> dict:
     """Estimate the battery capacity needed for a load and backup duration."""
-    return calculate_battery_size(
+
+    return _safe(
+        calculate_battery_size,
         load_kw=load_kw,
         backup_hours=backup_hours,
     )
@@ -43,10 +93,21 @@ def battery_sizing_tool(load_kw: float, backup_hours: float) -> dict:
 
 @tool
 def bill_analysis_tool(monthly_bill_bdt: float) -> dict:
-    """Estimate monthly electricity consumption from a bill in BDT."""
-    return estimate_monthly_consumption(
+    """Estimate monthly electricity consumption (kWh) from a monthly
+    electricity bill in BDT, using the BERC residential slab tariff."""
+
+    return _safe(
+        estimate_monthly_consumption,
         monthly_bill_bdt=monthly_bill_bdt,
     )
+
+
+@tool
+def electricity_bill_tool(monthly_kwh: float) -> dict:
+    """Calculate the monthly electricity bill in BDT for a given
+    consumption in kWh, using the BERC residential slab tariff."""
+
+    return _safe(calculate_bill, monthly_kwh=monthly_kwh)
 
 
 @tool
@@ -55,16 +116,41 @@ def solar_cost_tool(
     battery_capacity_kwh: float = 0.0,
 ) -> dict:
     """Estimate solar system and optional battery costs in BDT."""
-    return estimate_solar_cost(
+
+    return _safe(
+        estimate_solar_cost,
         capacity_kw=capacity_kw,
         battery_capacity_kwh=battery_capacity_kwh,
     )
 
 
 @tool
+def savings_payback_tool(
+    monthly_consumption_kwh: float,
+    monthly_generation_kwh: float,
+    solar_cost_bdt: float,
+    battery_cost_bdt: float = 0.0,
+) -> dict:
+    """Estimate monthly bill savings and simple payback in years from
+    monthly consumption, monthly solar generation and system cost,
+    under the BERC residential slab tariff."""
+
+    return _safe(
+        calculate_savings_and_payback,
+        monthly_consumption_kwh=monthly_consumption_kwh,
+        monthly_generation_kwh=monthly_generation_kwh,
+        solar_cost_bdt=solar_cost_bdt,
+        battery_cost_bdt=battery_cost_bdt,
+    )
+
+
+@tool
 def solar_resource_tool(latitude: float, longitude: float) -> dict:
-    """Retrieve estimated solar generation for geographic coordinates using PVGIS."""
-    return get_solar_resource(
+    """Retrieve estimated solar generation per 1 kW for geographic
+    coordinates using PVGIS."""
+
+    return _safe(
+        get_solar_resource,
         latitude=latitude,
         longitude=longitude,
     )
@@ -72,35 +158,33 @@ def solar_resource_tool(latitude: float, longitude: float) -> dict:
 
 @tool
 def location_solar_resource_tool(location: str) -> dict:
-    """Find a location in Bangladesh and retrieve its estimated solar generation using PVGIS."""
-    coordinates = get_location_coordinates(location)
+    """Find a location in Bangladesh and retrieve its estimated solar
+    generation per 1 kW using PVGIS."""
 
-    if not coordinates["found"]:
-        return {
-            "found": False,
-            "location": location,
-            "message": coordinates["message"],
-        }
-
-    solar_data = get_solar_resource(
-        latitude=coordinates["latitude"],
-        longitude=coordinates["longitude"],
-    )
+    try:
+        place = get_location_yield(location)
+    except ValueError as error:
+        return {"found": False, "location": location, "message": str(error)}
+    except RuntimeError as error:
+        return {"error": str(error)}
 
     return {
         "found": True,
-        "location": coordinates["location"],
-        "latitude": coordinates["latitude"],
-        "longitude": coordinates["longitude"],
-        "solar_resource": solar_data,
+        "location": place["location"],
+        "latitude": place["latitude"],
+        "longitude": place["longitude"],
+        "solar_resource": place["solar_resource"],
     }
 
 
 solar_tools = [
+    assess_solar_tool,
     solar_generation_tool,
     battery_sizing_tool,
     bill_analysis_tool,
+    electricity_bill_tool,
     solar_cost_tool,
+    savings_payback_tool,
     solar_resource_tool,
     location_solar_resource_tool,
 ]
