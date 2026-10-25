@@ -8,6 +8,6 @@ pandas
 numpy
 plotly
 pytest
-
 fpdf2
 requests
+uharfbuzz
