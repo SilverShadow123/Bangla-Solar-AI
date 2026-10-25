@@ -1,7 +1,9 @@
+
 import streamlit as st
 from langchain_core.messages import HumanMessage
 
 from services.solar_engine import assess_solar_feasibility
+from tools.config import AssumptionsError, resolve_assumptions
 from services.report_service import (
     generate_solar_report,
     generate_solar_report_pdf,
@@ -12,6 +14,10 @@ from services.agent_service import (
 )
 
 
+# --------------------------------------------------
+# PAGE CONFIGURATION
+# --------------------------------------------------
+
 st.set_page_config(
     page_title="Bangla Solar AI",
     page_icon="☀️",
@@ -21,6 +27,10 @@ st.set_page_config(
 st.title("☀️ Bangla Solar AI")
 st.caption("বাংলায় আপনার ছাদের সৌরবিদ্যুৎ সম্ভাব্যতা যাচাই করুন")
 
+
+# --------------------------------------------------
+# SESSION STATE
+# --------------------------------------------------
 
 if "chat_history" not in st.session_state:
     st.session_state["chat_history"] = []
@@ -40,6 +50,10 @@ if "assessment_inputs" not in st.session_state:
 if "report_pdf" not in st.session_state:
     st.session_state["report_pdf"] = None
 
+
+# --------------------------------------------------
+# SIDEBAR: SOLAR ASSESSMENT
+# --------------------------------------------------
 
 with st.sidebar:
     st.header("Solar Assessment")
@@ -83,6 +97,75 @@ with st.sidebar:
             step=1.0,
         )
 
+    # Defaults come from data/assumptions.json. Only values the user
+    # changes are sent as overrides.
+    assumption_overrides = {}
+
+    try:
+        defaults = resolve_assumptions()
+    except AssumptionsError as error:
+        defaults = None
+        st.error(f"Assumptions file problem: {error}")
+
+    if defaults is not None:
+        with st.expander("Advanced: use your own prices"):
+            st.caption(
+                "Defaults come from data/assumptions.json. Change a value "
+                "to use your own installer quote or the figures on your bill."
+            )
+
+            solar_cost = st.number_input(
+                "Solar cost per kW (BDT)",
+                min_value=1.0,
+                value=float(defaults["costs"]["solar_cost_per_kw_bdt"]),
+                step=5000.0,
+            )
+
+            battery_cost = st.number_input(
+                "Battery cost per kWh (BDT)",
+                min_value=1.0,
+                value=float(defaults["costs"]["battery_cost_per_kwh_bdt"]),
+                step=1000.0,
+            )
+
+            vat_percent = st.number_input(
+                "VAT on bill (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=float(defaults["tariff"]["vat_rate"]) * 100,
+                step=0.5,
+            )
+
+            demand_charge = st.number_input(
+                "Demand charge on bill (BDT/month)",
+                min_value=0.0,
+                value=float(defaults["tariff"]["demand_charge_bdt"]),
+                step=10.0,
+            )
+
+            area_per_kw = st.number_input(
+                "Roof area per kW of panels (m²)",
+                min_value=2.0,
+                max_value=30.0,
+                value=float(defaults["roof"]["area_per_kw_sqm"]),
+                step=0.5,
+            )
+
+        if solar_cost != float(defaults["costs"]["solar_cost_per_kw_bdt"]):
+            assumption_overrides["costs.solar_cost_per_kw_bdt"] = solar_cost
+
+        if battery_cost != float(defaults["costs"]["battery_cost_per_kwh_bdt"]):
+            assumption_overrides["costs.battery_cost_per_kwh_bdt"] = battery_cost
+
+        if abs(vat_percent / 100 - float(defaults["tariff"]["vat_rate"])) > 1e-9:
+            assumption_overrides["tariff.vat_rate"] = vat_percent / 100
+
+        if demand_charge != float(defaults["tariff"]["demand_charge_bdt"]):
+            assumption_overrides["tariff.demand_charge_bdt"] = demand_charge
+
+        if area_per_kw != float(defaults["roof"]["area_per_kw_sqm"]):
+            assumption_overrides["roof.area_per_kw_sqm"] = area_per_kw
+
     language = st.selectbox(
         "Report language",
         ["English", "বাংলা"],
@@ -104,6 +187,10 @@ with st.sidebar:
         st.rerun()
 
 
+# --------------------------------------------------
+# RUN SOLAR ASSESSMENT
+# --------------------------------------------------
+
 if assess_clicked:
     if not location.strip():
         st.warning("Please enter your location.")
@@ -123,6 +210,7 @@ if assess_clicked:
                     needs_battery=needs_battery,
                     backup_load_kw=backup_load,
                     backup_hours=backup_hours,
+                    overrides=assumption_overrides or None,
                 )
 
             report_language = (
@@ -134,10 +222,12 @@ if assess_clicked:
                 language=report_language,
             )
 
+            # Save the assessment result and generated report.
             st.session_state["assessment"] = result
             st.session_state["report"] = report
-            st.session_state["report_pdf"] = None
+            st.session_state["report_pdf"] = None  # rebuild for new data
 
+            # Save the exact inputs used for this assessment.
             st.session_state["assessment_inputs"] = {
                 "location": location,
                 "monthly_bill_bdt": monthly_bill,
@@ -154,6 +244,10 @@ if assess_clicked:
         except (ValueError, RuntimeError) as error:
             st.error(str(error))
 
+
+# --------------------------------------------------
+# DISPLAY SOLAR ASSESSMENT
+# --------------------------------------------------
 
 if st.session_state["assessment"] is not None:
     result = st.session_state["assessment"]
@@ -177,6 +271,25 @@ if st.session_state["assessment"] is not None:
         "Estimated Cost",
         f"৳{result['cost']['total_cost_bdt']:,.0f}",
     )
+
+    # --------------------------------------------------
+    # DATA WARNINGS (unverified or out-of-date assumptions)
+    # --------------------------------------------------
+
+    assumptions = result.get("assumptions") or {}
+    data_warnings = assumptions.get("warnings") or []
+
+    if data_warnings:
+        st.warning(
+            "**Check these assumptions before relying on the numbers:**\n\n"
+            + "\n".join(f"- {warning}" for warning in data_warnings)
+            + "\n\nYou can enter your own values under "
+            "*Advanced: use your own prices* in the sidebar."
+        )
+
+    # --------------------------------------------------
+    # SAVINGS AND PAYBACK
+    # --------------------------------------------------
 
     savings = result.get("savings")
     sizing = result.get("sizing")
@@ -226,6 +339,10 @@ if st.session_state["assessment"] is not None:
                 "A backup battery does not reduce your bill."
             )
 
+    # --------------------------------------------------
+    # ENERGY ASSESSMENT
+    # --------------------------------------------------
+
     energy = result.get("energy_assessment")
 
     if energy:
@@ -269,9 +386,20 @@ if st.session_state["assessment"] is not None:
                 "matches household consumption."
             )
 
+    # --------------------------------------------------
+    # DETAILED FEASIBILITY REPORT
+    # --------------------------------------------------
+
     st.subheader("Feasibility Report")
     st.markdown(report)
 
+    # --------------------------------------------------
+    # PDF DOWNLOAD
+    # --------------------------------------------------
+
+    # Build the PDF once per assessment and reuse the same bytes on every
+    # rerun. Rebuilding it on each chat message can make the browser
+    # download the file again automatically.
     if st.session_state["report_pdf"] is None:
         try:
             st.session_state["report_pdf"] = generate_solar_report_pdf(
@@ -288,6 +416,8 @@ if st.session_state["assessment"] is not None:
             )
 
     if st.session_state["report_pdf"] is not None:
+        # on_click="ignore" stops a download click from rerunning the
+        # script. It needs Streamlit 1.43 or newer.
         _version = tuple(
             int(part)
             for part in st.__version__.split(".")[:2]
@@ -307,14 +437,57 @@ if st.session_state["assessment"] is not None:
             **_download_options,
         )
 
+    # --------------------------------------------------
+    # ASSUMPTIONS AND LIMITATIONS
+    # --------------------------------------------------
+
     with st.expander("View assumptions and limitations"):
+        st.markdown("**Assumptions used**")
+
+        overrides_used = assumptions.get("overrides") or {}
+
+        st.table(
+            [
+                {
+                    "Assumption": key,
+                    "Value": str(value),
+                    "Source": (
+                        "your override"
+                        if key in overrides_used
+                        else "data/assumptions.json"
+                    ),
+                }
+                for key, value in (assumptions.get("values") or {}).items()
+            ]
+        )
+
+        for name, source in (assumptions.get("sources") or {}).items():
+            link = (
+                f" ([source]({source['source_url']}))"
+                if source.get("source_url")
+                else ""
+            )
+            st.write(
+                f"- {source['label']}: "
+                f"as of {source.get('as_of') or 'n/a'}, "
+                f"{'verified' if source.get('verified') else 'unverified'}"
+                f"{link}"
+            )
+
+        st.markdown("**Limitations**")
+
         for limitation in result.get("limitations", []):
             st.write(f"- {limitation}")
 
 
+# --------------------------------------------------
+# CHAT INTERFACE
+# --------------------------------------------------
+
 st.divider()
 st.subheader("Ask Bangla Solar AI")
 
+# Display previous conversation.
 for message in st.session_state["chat_history"]:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -324,7 +497,12 @@ user_input = st.chat_input(
 )
 
 
+# --------------------------------------------------
+# CHAT: LANGGRAPH AGENT + MEMORY + TOOL TRACE
+# --------------------------------------------------
+
 if user_input:
+    # Save and display the user's message.
     st.session_state["chat_history"].append(
         {
             "role": "user",
@@ -335,6 +513,7 @@ if user_input:
     with st.chat_message("user"):
         st.markdown(user_input)
 
+    # Include previous LangChain messages for agent memory.
     current_messages = (
         st.session_state["agent_messages"]
         + [HumanMessage(content=user_input)]
@@ -351,6 +530,7 @@ if user_input:
                     ),
                 )
 
+            # Preserve agent messages and tool interactions.
             st.session_state["agent_messages"] = (
                 current_messages + agent_result["messages"]
             )
@@ -365,6 +545,10 @@ if user_input:
                     "a text response. Check the execution trace."
                 )
                 st.warning(answer)
+
+            # --------------------------------------------------
+            # AGENT EXECUTION TRACE
+            # --------------------------------------------------
 
             tool_calls = agent_result["tool_calls"]
             tool_results = agent_result["tool_results"]
@@ -408,6 +592,7 @@ if user_input:
                         st.caption("Tool result")
                         st.code(item["result"])
 
+                # Find results without a matching tool-call ID.
                 matched_ids = {
                     item["tool_call_id"]
                     for call in tool_calls
@@ -431,6 +616,7 @@ if user_input:
                         st.write(f"Tool: `{item['name']}`")
                         st.code(item["result"])
 
+        # Save the assistant response in the visible chat history.
         st.session_state["chat_history"].append(
             {
                 "role": "assistant",

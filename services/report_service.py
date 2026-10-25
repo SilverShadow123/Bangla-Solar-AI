@@ -6,6 +6,10 @@ from pathlib import Path
 from fpdf import FPDF
 
 
+# ==========================================================
+# FONT CONFIGURATION
+# ==========================================================
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FONT_DIR = PROJECT_ROOT / "assets" / "fonts"
 
@@ -30,6 +34,10 @@ def _validate_fonts():
               "and place them in assets/fonts/."
         )
 
+
+# ==========================================================
+# SOLAR FEASIBILITY REPORT
+# ==========================================================
 
 def generate_solar_report(
     result: dict,
@@ -64,9 +72,13 @@ def generate_solar_report(
                 "বিদ্যুৎ ব্যবহার BERC আবাসিক স্ল্যাব ট্যারিফ থেকে "
                 "অনুমান করা হয়েছে; ডিমান্ড চার্জসহ অন্যান্য ফি ধরা হয়নি।",
 
-            "Roof capacity assumes about 5.5 m² per kW of panels and 70% usable roof area.":
-                "ছাদের ধারণক্ষমতা প্রতি কিলোওয়াটে প্রায় ৫.৫ বর্গমিটার "
-                "এবং ছাদের ৭০% ব্যবহারযোগ্য ধরে হিসাব করা হয়েছে।",
+            "Roof capacity is estimated from an assumed panel area per kW and usable roof fraction (see the assumptions used).":
+                "ছাদের ধারণক্ষমতা প্রতি কিলোওয়াটে ধরা প্যানেলের জায়গা ও "
+                "ছাদের ব্যবহারযোগ্য অংশের অনুমানের ভিত্তিতে হিসাব করা হয়েছে।",
+
+            "Some assumptions are unverified or may be out of date; verify prices and tariffs before deciding.":
+                "কিছু অনুমান যাচাই করা হয়নি বা পুরোনো হতে পারে; সিদ্ধান্তের "
+                "আগে দাম ও ট্যারিফ যাচাই করুন।",
 
             "Savings assume exported surplus has no cash value; only generation up to monthly consumption reduces the bill.":
                 "সঞ্চয়ের হিসাবে উদ্বৃত্ত বিদ্যুতের কোনো নগদ মূল্য ধরা হয়নি; "
@@ -219,6 +231,10 @@ def generate_solar_report(
     return "\n".join(lines)
 
 
+# ==========================================================
+# PDF DOCUMENT
+# ==========================================================
+
 class SolarReportPDF(FPDF):
     """A4 report with Unicode fonts and Bangla text shaping."""
 
@@ -348,6 +364,10 @@ class SolarReportPDF(FPDF):
         self.set_xy(x, y + row_height)
 
 
+# ==========================================================
+# FORMATTING HELPERS
+# ==========================================================
+
 def _format_number(value, decimals=2):
     """Format numeric values for display."""
 
@@ -379,6 +399,10 @@ def _clean_markdown(text):
 
     return text.strip()
 
+
+# ==========================================================
+# MARKDOWN TO PDF
+# ==========================================================
 
 def _markdown_to_pdf(pdf, report):
     """Render headings, lists, blockquotes, tables and paragraphs."""
@@ -540,6 +564,10 @@ def _markdown_to_pdf(pdf, report):
             _clean_markdown(" ".join(paragraph_lines))
         )
 
+
+# ==========================================================
+# ASSESSMENT SUMMARY
+# ==========================================================
 
 def _build_assessment_summary(
     pdf,
@@ -732,6 +760,10 @@ def _build_assessment_summary(
     pdf.section_title("Feasibility Report", size=12)
 
 
+# ==========================================================
+# PDF GENERATION
+# ==========================================================
+
 def generate_solar_report_pdf(
     report: str,
     assessment: dict | None = None,
@@ -770,6 +802,7 @@ def generate_solar_report_pdf(
         margin=18,
     )
 
+    # Register embedded Unicode fonts.
     pdf.add_font(
         family="Noto",
         style="",
@@ -782,6 +815,7 @@ def generate_solar_report_pdf(
         fname=str(BOLD_FONT),
     )
 
+    # Enable HarfBuzz shaping for Bangla conjuncts and vowel signs.
     pdf.set_text_shaping(
         use_shaping_engine=True,
         script="Beng",
@@ -806,4 +840,5 @@ def generate_solar_report_pdf(
         report=report,
     )
 
+    # fpdf2 returns PDF data as a bytearray.
     return bytes(pdf.output())

@@ -1,18 +1,22 @@
-from tools.tariff import TARIFF_BASIS, kwh_from_bill
+from tools.config import resolve_assumptions
+from tools.tariff import kwh_from_bill
 
 
 def estimate_monthly_consumption(
     monthly_bill_bdt: float,
     average_rate_bdt_per_kwh: float | None = None,
+    cfg: dict | None = None,
 ) -> dict:
     """Estimate monthly consumption from a bill.
 
-    By default the BERC residential slab tariff is inverted. Passing
+    By default the tariff in data/assumptions.json is inverted. Passing
     average_rate_bdt_per_kwh switches to a flat-rate estimate.
     """
 
     if monthly_bill_bdt < 0:
         raise ValueError("Monthly bill cannot be negative.")
+
+    cfg = cfg if cfg is not None else resolve_assumptions()
 
     if average_rate_bdt_per_kwh is not None:
         if average_rate_bdt_per_kwh <= 0:
@@ -21,8 +25,8 @@ def estimate_monthly_consumption(
         monthly_consumption = monthly_bill_bdt / average_rate_bdt_per_kwh
         basis = f"flat rate of {average_rate_bdt_per_kwh} BDT/kWh"
     else:
-        monthly_consumption = kwh_from_bill(monthly_bill_bdt)
-        basis = TARIFF_BASIS
+        monthly_consumption = kwh_from_bill(monthly_bill_bdt, cfg)
+        basis = cfg["tariff"]["basis"]
 
     effective_rate = (
         monthly_bill_bdt / monthly_consumption

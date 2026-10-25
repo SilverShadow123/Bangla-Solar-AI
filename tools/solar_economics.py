@@ -1,6 +1,7 @@
-"""Bill savings and payback under the BERC slab tariff."""
+"""Bill savings and payback under the configured tariff."""
 
-from tools.tariff import TARIFF_BASIS, bill_for_kwh
+from tools.config import resolve_assumptions
+from tools.tariff import bill_for_kwh
 
 
 def calculate_savings_and_payback(
@@ -8,6 +9,7 @@ def calculate_savings_and_payback(
     monthly_generation_kwh: float,
     solar_cost_bdt: float,
     battery_cost_bdt: float = 0.0,
+    cfg: dict | None = None,
 ) -> dict:
     """Estimate monthly savings and simple payback.
 
@@ -29,10 +31,12 @@ def calculate_savings_and_payback(
     if battery_cost_bdt < 0:
         raise ValueError("Battery cost cannot be negative.")
 
+    cfg = cfg if cfg is not None else resolve_assumptions()
+
     offset_kwh = min(monthly_generation_kwh, monthly_consumption_kwh)
 
-    bill_before = bill_for_kwh(monthly_consumption_kwh)
-    bill_after = bill_for_kwh(monthly_consumption_kwh - offset_kwh)
+    bill_before = bill_for_kwh(monthly_consumption_kwh, cfg)
+    bill_after = bill_for_kwh(monthly_consumption_kwh - offset_kwh, cfg)
 
     monthly_savings = bill_before - bill_after
     annual_savings = monthly_savings * 12
@@ -66,6 +70,6 @@ def calculate_savings_and_payback(
             if payback_with_battery is not None
             else None
         ),
-        "tariff_basis": TARIFF_BASIS,
+        "tariff_basis": cfg["tariff"]["basis"],
         "is_estimate": True,
     }

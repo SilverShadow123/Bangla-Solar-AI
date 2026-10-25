@@ -1,18 +1,28 @@
-"""Size a rooftop system from roof area AND household consumption."""
+"""Size a rooftop system from roof area AND household consumption.
 
-USABLE_ROOF_FRACTION = 0.70
+Roof and sizing assumptions come from data/assumptions.json.
+"""
 
-ROOF_AREA_PER_KW_SQM = 5.5
+from tools.config import resolve_assumptions
 
 
 def size_solar_system(
     roof_area_sqm: float,
     monthly_consumption_kwh: float,
     yearly_yield_kwh_per_kw: float,
-    target_offset_fraction: float = 1.0,
+    target_offset_fraction: float | None = None,
+    cfg: dict | None = None,
 ) -> dict:
     """Recommend a capacity: enough to offset the target share of
     consumption, but never more than the roof can hold."""
+
+    cfg = cfg if cfg is not None else resolve_assumptions()
+
+    usable_fraction = cfg["roof"]["usable_fraction"]
+    area_per_kw = cfg["roof"]["area_per_kw_sqm"]
+
+    if target_offset_fraction is None:
+        target_offset_fraction = cfg["sizing"]["target_offset_fraction"]
 
     if roof_area_sqm <= 0:
         raise ValueError("Roof area must be greater than zero.")
@@ -26,8 +36,8 @@ def size_solar_system(
     if not 0 < target_offset_fraction <= 1:
         raise ValueError("Target offset must be between 0 and 1.")
 
-    usable_roof_area = roof_area_sqm * USABLE_ROOF_FRACTION
-    roof_limit_kw = usable_roof_area / ROOF_AREA_PER_KW_SQM
+    usable_roof_area = roof_area_sqm * usable_fraction
+    roof_limit_kw = usable_roof_area / area_per_kw
 
     demand_kw = (
         monthly_consumption_kwh
@@ -40,6 +50,8 @@ def size_solar_system(
         "roof_area" if roof_limit_kw < demand_kw else "consumption"
     )
 
+    # A real system is a discrete size, so round once here and use this
+    # value everywhere downstream.
     recommended_kw = round(min(roof_limit_kw, demand_kw), 2)
 
     if recommended_kw <= 0:
@@ -54,6 +66,6 @@ def size_solar_system(
         "recommended_capacity_kw": recommended_kw,
         "limiting_factor": limiting_factor,
         "target_offset_fraction": target_offset_fraction,
-        "roof_area_per_kw_sqm": ROOF_AREA_PER_KW_SQM,
-        "usable_roof_fraction": USABLE_ROOF_FRACTION,
+        "roof_area_per_kw_sqm": area_per_kw,
+        "usable_roof_fraction": usable_fraction,
     }

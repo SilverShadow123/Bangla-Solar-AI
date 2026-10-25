@@ -13,6 +13,8 @@ from tools.solar_tools import solar_tools
 class SolarAgentState(TypedDict, total=False):
     messages: Annotated[list[BaseMessage], add_messages]
 
+    # The app's current assessment, rendered as text. It is rebuilt on
+    # every turn, so it always reflects the latest Assess click.
     assessment_context: str
 
 

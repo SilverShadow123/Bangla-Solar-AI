@@ -5,6 +5,7 @@ from agent.graph import solar_graph
 
 
 def format_message_content(content):
+    """Convert model message content into displayable text."""
 
     if isinstance(content, str):
         return content
@@ -67,6 +68,30 @@ def build_assessment_context(assessment, inputs):
         f"(solar {cost['solar_cost_bdt']}, battery {cost['battery_cost_bdt']})",
     ]
 
+    assumptions = assessment.get("assumptions") or {}
+    values = assumptions.get("values") or {}
+
+    if values:
+        lines.append(
+            "- Assumptions used: "
+            f"solar {values.get('costs.solar_cost_per_kw_bdt')} BDT/kW, "
+            f"battery {values.get('costs.battery_cost_per_kwh_bdt')} BDT/kWh, "
+            f"VAT {values.get('tariff.vat_rate')}, "
+            f"demand charge {values.get('tariff.demand_charge_bdt')} BDT/month, "
+            f"roof {values.get('roof.area_per_kw_sqm')} m2/kW, "
+            f"tariff: {assumptions.get('tariff_basis')}"
+        )
+
+    overrides = assumptions.get("overrides") or {}
+
+    lines.append(
+        f"- User overrides in effect: {overrides}" if overrides
+        else "- User overrides in effect: none (stored defaults used)"
+    )
+
+    for warning in assumptions.get("warnings") or []:
+        lines.append(f"- Data warning: {warning}")
+
     if battery:
         lines.append(
             f"- Battery: {battery['battery_capacity_kwh']} kWh for "
@@ -93,6 +118,10 @@ def build_assessment_context(assessment, inputs):
         "what-if (different bill, roof, location or battery), call "
         "assess_solar_tool with the new values and say it is a "
         "what-if compared with the current assessment.",
+        "- Pass the same assumption_overrides as listed above unless "
+        "the user changes them.",
+        "- If there are data warnings, mention that prices or "
+        "tariffs are unverified when giving cost or payback figures.",
     ])
 
     return "\n".join(lines)

@@ -1,10 +1,22 @@
+from tools.config import resolve_assumptions
+
 
 def calculate_battery_size(
     load_kw: float,
     backup_hours: float,
-    depth_of_discharge: float = 0.80,
-    inverter_efficiency: float = 0.90,
+    depth_of_discharge: float | None = None,
+    inverter_efficiency: float | None = None,
+    cfg: dict | None = None,
 ) -> dict:
+    """Size a backup battery. Efficiencies default to data/assumptions.json."""
+
+    cfg = cfg if cfg is not None else resolve_assumptions()
+
+    if depth_of_discharge is None:
+        depth_of_discharge = cfg["battery"]["depth_of_discharge"]
+
+    if inverter_efficiency is None:
+        inverter_efficiency = cfg["battery"]["inverter_efficiency"]
 
     if load_kw <= 0:
         raise ValueError("Load must be greater than zero.")
@@ -29,5 +41,7 @@ def calculate_battery_size(
         "backup_hours": backup_hours,
         "required_energy_kwh": round(required_energy, 2),
         "battery_capacity_kwh": round(battery_capacity, 2),
+        "depth_of_discharge": depth_of_discharge,
+        "inverter_efficiency": inverter_efficiency,
         "is_estimate": True,
     }

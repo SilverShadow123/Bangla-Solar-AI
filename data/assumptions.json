@@ -1,0 +1,78 @@
+{
+  "max_age_days": 180,
+
+  "tariff": {
+    "label": "Electricity tariff",
+    "basis": "BERC residential slab tariff, June 2026",
+    "source_url": "https://www.dhakatribune.com/bangladesh/power-energy/411765/berc-withdraws-excess-power-tariff-for-up-to-75",
+    "as_of": "2026-06-04",
+    "verified": true,
+    "note": "Slab rates are from the BERC June 2026 order after the 0-75 unit rollback. VAT and demand charge are NOT confirmed here: check a recent bill and set them below.",
+    "lifeline_limit_kwh": 50,
+    "lifeline_rate_bdt": 4.63,
+    "slabs": [
+      { "up_to_kwh": 75,   "rate_bdt": 5.26 },
+      { "up_to_kwh": 200,  "rate_bdt": 8.50 },
+      { "up_to_kwh": 300,  "rate_bdt": 9.10 },
+      { "up_to_kwh": 400,  "rate_bdt": 9.62 },
+      { "up_to_kwh": 600,  "rate_bdt": 15.01 },
+      { "up_to_kwh": null, "rate_bdt": 17.35 }
+    ],
+    "vat_rate": 0.05,
+    "demand_charge_bdt": 0.0
+  },
+
+  "roof": {
+    "label": "Roof and panel sizing",
+    "source_url": null,
+    "as_of": null,
+    "verified": false,
+    "note": "Placeholder values. Confirm roof area per kW and usable roof share with your installer or panel datasheet.",
+    "usable_fraction": 0.70,
+    "area_per_kw_sqm": 5.5
+  },
+
+  "costs": {
+    "label": "Equipment costs",
+    "source_url": null,
+    "as_of": null,
+    "verified": false,
+    "replaceable_by_quote": true,
+    "note": "Placeholder prices, not quotations. Replace with real installer quotes (payback depends heavily on them).",
+    "solar_cost_per_kw_bdt": 80000,
+    "battery_cost_per_kwh_bdt": 30000
+  },
+
+  "battery": {
+    "label": "Battery assumptions",
+    "source_url": null,
+    "as_of": null,
+    "verified": false,
+    "note": "Typical placeholder values. Check the battery and inverter datasheets.",
+    "depth_of_discharge": 0.80,
+    "inverter_efficiency": 0.90
+  },
+
+  "pvgis": {
+    "label": "PVGIS solar data settings",
+    "source_url": "https://re.jrc.ec.europa.eu/pvg_tools/en/",
+    "as_of": null,
+    "verified": true,
+    "note": "Yield is fetched live from PVGIS. angle_degrees and aspect_degrees are null, so PVGIS defaults apply: set them (or use_optimal_angles) to match the real roof.",
+    "api_url": "https://re.jrc.ec.europa.eu/api/v5_3/PVcalc",
+    "timeout_seconds": 30,
+    "system_loss_percent": 14,
+    "angle_degrees": null,
+    "aspect_degrees": null,
+    "use_optimal_angles": false
+  },
+
+  "sizing": {
+    "label": "System sizing target",
+    "source_url": null,
+    "as_of": null,
+    "verified": true,
+    "note": "Design choice: share of average consumption the system is sized to offset.",
+    "target_offset_fraction": 1.0
+  }
+}

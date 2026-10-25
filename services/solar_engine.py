@@ -1,11 +1,13 @@
 from tools.battery_sizing import calculate_battery_size
 from tools.bill_analysis import estimate_monthly_consumption
+from tools.config import assumptions_summary, resolve_assumptions
 from tools.cost_estimation import estimate_solar_cost
 from tools.pv_yield import get_location_yield
 from tools.solar_economics import calculate_savings_and_payback
 from tools.system_sizing import size_solar_system
 
 
+# Generation within this share of consumption counts as "balanced".
 BALANCE_TOLERANCE = 0.05
 
 
@@ -16,13 +18,18 @@ def assess_solar_feasibility(
     needs_battery: bool = False,
     backup_load_kw: float = 0.5,
     backup_hours: float = 4.0,
-    target_offset_fraction: float = 1.0,
+    target_offset_fraction: float | None = None,
+    overrides: dict | None = None,
 ) -> dict:
     """Create a preliminary, location-aware solar feasibility assessment.
 
     The system is sized to offset the household's consumption, limited
     by what the roof can hold, then costed, and its bill savings and
-    payback are estimated under the BERC slab tariff.
+    payback are estimated under the configured tariff.
+
+    All assumptions come from data/assumptions.json. `overrides` lets the
+    caller replace specific values (for example a real installer quote),
+    using keys such as "costs.solar_cost_per_kw_bdt".
     """
 
     if monthly_bill_bdt <= 0:
@@ -34,21 +41,29 @@ def assess_solar_feasibility(
     if not location or not location.strip():
         raise ValueError("Location is required.")
 
-    bill = estimate_monthly_consumption(monthly_bill_bdt)
+    # 0. Resolve assumptions once (file values + user overrides).
+    cfg = resolve_assumptions(overrides)
+
+    # 1. Consumption from the bill, using the slab tariff.
+    bill = estimate_monthly_consumption(monthly_bill_bdt, cfg=cfg)
     monthly_consumption_kwh = bill["monthly_consumption_kwh"]
 
-    place = get_location_yield(location)
+    # 2. Location-specific yield per kW (cached, shared with the agent).
+    place = get_location_yield(location, cfg=cfg)
     yearly_yield_per_kw = place["yearly_kwh_per_kw"]
 
+    # 3. Size from roof AND consumption.
     sizing = size_solar_system(
         roof_area_sqm=roof_area_sqm,
         monthly_consumption_kwh=monthly_consumption_kwh,
         yearly_yield_kwh_per_kw=yearly_yield_per_kw,
         target_offset_fraction=target_offset_fraction,
+        cfg=cfg,
     )
 
     solar_capacity_kw = sizing["recommended_capacity_kw"]
 
+    # 4. Generation for that system.
     estimated_annual_kwh = yearly_yield_per_kw * solar_capacity_kw
 
     generation = {
@@ -63,6 +78,7 @@ def assess_solar_feasibility(
 
     monthly_generation_kwh = estimated_annual_kwh / 12
 
+    # 5. Energy balance, with a tolerance instead of exact equality.
     energy_balance_kwh = round(
         monthly_generation_kwh - monthly_consumption_kwh, 2
     )
@@ -95,26 +111,33 @@ def assess_solar_feasibility(
             ),
         }
 
+    # 6. Optional battery.
     battery = None
 
     if needs_battery:
         battery = calculate_battery_size(
             load_kw=backup_load_kw,
             backup_hours=backup_hours,
+            cfg=cfg,
         )
 
     battery_capacity_kwh = battery["battery_capacity_kwh"] if battery else 0
 
+    # 7. Cost.
     cost = estimate_solar_cost(
         capacity_kw=solar_capacity_kw,
         battery_capacity_kwh=battery_capacity_kwh,
+        cfg=cfg,
     )
 
+    # 8. Savings and payback (payback is on the solar cost; a backup
+    #    battery does not reduce the bill, so it is reported separately).
     savings = calculate_savings_and_payback(
         monthly_consumption_kwh=monthly_consumption_kwh,
         monthly_generation_kwh=monthly_generation_kwh,
         solar_cost_bdt=cost["solar_cost_bdt"],
         battery_cost_bdt=cost["battery_cost_bdt"],
+        cfg=cfg,
     )
 
     limitations = [
@@ -131,8 +154,8 @@ def assess_solar_feasibility(
         "current quotations.",
         "Actual output depends on installation and "
         "weather conditions.",
-        "Roof capacity assumes about 5.5 m² per kW of panels "
-        "and 70% usable roof area.",
+        "Roof capacity is estimated from an assumed panel area per kW "
+        "and usable roof fraction (see the assumptions used).",
         "Savings assume exported surplus has no cash value; only "
         "generation up to monthly consumption reduces the bill.",
         "Savings use average monthly figures; seasonal variation "
@@ -140,6 +163,14 @@ def assess_solar_feasibility(
         "Payback ignores tariff changes, panel degradation, "
         "maintenance, financing, and battery replacement.",
     ]
+
+    assumptions = assumptions_summary(cfg)
+
+    if assumptions["warnings"]:
+        limitations.append(
+            "Some assumptions are unverified or may be out of date; "
+            "verify prices and tariffs before deciding."
+        )
 
     if sizing["limiting_factor"] == "roof_area":
         limitations.append(
@@ -167,5 +198,6 @@ def assess_solar_feasibility(
         "battery": battery,
         "cost": cost,
         "savings": savings,
+        "assumptions": assumptions,
         "limitations": limitations,
     }

@@ -11,7 +11,8 @@ from tools.tariff import calculate_bill
 
 
 def _safe(function, **kwargs) -> dict:
-    """Run a calculation and return errors as data."""
+    """Run a calculation and return errors as data, so a failed lookup
+    (for example a PVGIS timeout) does not abort the whole chat turn."""
 
     try:
         return function(**kwargs)
@@ -27,6 +28,7 @@ def assess_solar_tool(
     needs_battery: bool = False,
     backup_load_kw: float = 0.5,
     backup_hours: float = 4.0,
+    assumption_overrides: dict | None = None,
 ) -> dict:
     """Run the full rooftop solar feasibility assessment.
 
@@ -35,6 +37,10 @@ def assess_solar_tool(
     cost, monthly bill savings and payback. Call this when the user
     asks "what if" about a different bill, roof area, location or
     battery setting.
+
+    assumption_overrides: optional dict replacing stored assumptions,
+    such as the user's own installer quote. Allowed keys: battery.depth_of_discharge, battery.inverter_efficiency, costs.battery_cost_per_kwh_bdt, costs.solar_cost_per_kw_bdt, pvgis.system_loss_percent, roof.area_per_kw_sqm, roof.usable_fraction, sizing.target_offset_fraction, tariff.demand_charge_bdt, tariff.vat_rate.
+    If the current assessment lists user overrides, pass the same ones.
     """
 
     return _safe(
@@ -45,6 +51,7 @@ def assess_solar_tool(
         needs_battery=needs_battery,
         backup_load_kw=backup_load_kw,
         backup_hours=backup_hours,
+        overrides=assumption_overrides,
     )
 
 
