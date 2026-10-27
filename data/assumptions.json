@@ -2,12 +2,15 @@
   "max_age_days": 180,
 
   "tariff": {
-    "label": "Electricity tariff",
-    "basis": "BERC residential slab tariff, June 2026",
+    "label": "Electricity tariff and bill charges",
+    "label_bn": "বিদ্যুতের ট্যারিফ ও বিলের চার্জ",
+    "basis": "BERC residential (LT-A) slab tariff, June 2026",
     "source_url": "https://www.dhakatribune.com/bangladesh/power-energy/411765/berc-withdraws-excess-power-tariff-for-up-to-75",
-    "as_of": "2026-06-04",
+    "cross_check_url": "https://ebill.info.bd/",
+    "as_of": "2026-10-26",
     "verified": true,
-    "note": "Slab rates are from the BERC June 2026 order after the 0-75 unit rollback. VAT and demand charge are NOT confirmed here: check a recent bill and set them below.",
+    "note": "Slab rates follow the BERC June 2026 order. The demand charge (Tk 42 per kW of sanctioned load) and 5% VAT on energy plus demand charge were cross-checked against published example bills for 100, 200 and 300 units. Meter rent and the prompt-payment rebate are not modelled. Enter the sanctioned load printed on your bill.",
+    "note_bn": "স্ল্যাব রেট BERC-এর জুন ২০২৬ আদেশ অনুযায়ী। ডিমান্ড চার্জ (প্রতি কিলোওয়াট মঞ্জুরকৃত লোডে ৪২ টাকা) এবং এনার্জি ও ডিমান্ড চার্জের ওপর ৫% ভ্যাট ১০০, ২০০ ও ৩০০ ইউনিটের প্রকাশিত উদাহরণ বিলের সাথে মিলিয়ে দেখা হয়েছে। মিটার ভাড়া ও সময়মতো পরিশোধের রিবেট হিসাবে ধরা হয়নি। আপনার বিলে ছাপা মঞ্জুরকৃত লোড দিন।",
     "lifeline_limit_kwh": 50,
     "lifeline_rate_bdt": 4.63,
     "slabs": [
@@ -19,46 +22,77 @@
       { "up_to_kwh": null, "rate_bdt": 17.35 }
     ],
     "vat_rate": 0.05,
-    "demand_charge_bdt": 0.0
+    "demand_charge_per_kw_bdt": 42,
+    "sanctioned_load_kw": 2.0
   },
 
-  "roof": {
-    "label": "Roof and panel sizing",
-    "source_url": null,
-    "as_of": null,
-    "verified": false,
-    "note": "Placeholder values. Confirm roof area per kW and usable roof share with your installer or panel datasheet.",
-    "usable_fraction": 0.70,
-    "area_per_kw_sqm": 5.5
+  "net_metering": {
+    "label": "Net metering and surplus payment",
+    "label_bn": "নেট মিটারিং ও উদ্বৃত্ত বিদ্যুতের মূল্য",
+    "source_url": "https://www.thedailystar.net/business/economy/news/rooftop-solar-gets-new-incentive-package-4262426",
+    "cross_check_url": "https://www.pv-magazine.com/2026/09/02/bangladesh-introduces-0-086-kwh-tariff-for-net-metered-rooftop-solar/",
+    "as_of": "2026-10-26",
+    "verified": true,
+    "estimate": true,
+    "note": "Under the Net Metering Guidelines 2025, surplus units roll forward as credit and leftover credit is settled quarterly. Systems with battery storage installed by 28 Feb 2027 get the Tk 10.50/unit incentive for surplus until 28 Feb 2030 (Power Division, Sept 2026). The standard surplus rate is an ESTIMATE: it is the BERC bulk purchase rate (the 2018 guideline example used Tk 6.615; a 2026 calculator site quotes about Tk 7). Confirm it with your distribution company.",
+    "note_bn": "নেট মিটারিং গাইডলাইন ২০২৫ অনুযায়ী উদ্বৃত্ত ইউনিট ক্রেডিট হিসেবে পরের মাসে জমা থাকে এবং অবশিষ্ট ক্রেডিট ত্রৈমাসিকে নিষ্পত্তি হয়। ২৮ ফেব্রুয়ারি ২০২৭-এর মধ্যে ব্যাটারিসহ স্থাপিত সিস্টেম ২৮ ফেব্রুয়ারি ২০৩০ পর্যন্ত উদ্বৃত্ত বিদ্যুতে ইউনিটপ্রতি ১০.৫০ টাকা পাবে (বিদ্যুৎ বিভাগ, সেপ্টেম্বর ২০২৬)। সাধারণ উদ্বৃত্ত হারটি আনুমানিক—এটি BERC-নির্ধারিত বাল্ক ক্রয়মূল্য। আপনার বিতরণ কোম্পানির কাছ থেকে নিশ্চিত হয়ে নিন।",
+    "enabled_by_default": true,
+    "settlement_months": [3, 6, 9, 12],
+    "standard_surplus_rate_bdt_per_kwh": 6.6,
+    "incentive_rate_bdt_per_kwh": 10.5,
+    "incentive_requires_battery": true,
+    "incentive_install_deadline": "2027-02-28",
+    "incentive_valid_until": "2030-02-28",
+    "max_capacity_fraction_of_sanctioned_load": 1.0
   },
 
   "costs": {
     "label": "Equipment costs",
+    "label_bn": "যন্ত্রপাতির খরচ",
+    "source_url": "https://en.prothomalo.com/amp/story/bangladesh/hlc504ofa0",
+    "cross_check_url": "https://solar.com.bd/product-category/battery/",
+    "as_of": "2026-10-26",
+    "verified": true,
+    "estimate": true,
+    "replaceable_by_quote": true,
+    "note": "Market estimates, not quotations. Solar: ACI Motors quoted about Tk 3 lakh for a 5 kW system (about Tk 60,000/kW, Prothom Alo); retailer pages list roughly Tk 65,000-95,000/kW for 1-3 kW systems. Battery: retail LiFePO4 5 kWh packs sell for about Tk 93,500-130,000 (roughly Tk 18,000-25,000 per kWh); bigger packs cost less per kWh. A hybrid inverter and installation extras are not itemised. Replace with a real installer quote.",
+    "note_bn": "বাজারের আনুমানিক মূল্য, কোটেশন নয়। সোলার: ACI মোটরস ৫ কিলোওয়াটের সিস্টেমের জন্য প্রায় ৩ লাখ টাকা (প্রায় ৬০,০০০ টাকা/কিলোওয়াট) বলেছে; খুচরা বিক্রেতারা ১–৩ কিলোওয়াটের জন্য প্রায় ৬৫,০০০–৯৫,০০০ টাকা/কিলোওয়াট দেখায়। ব্যাটারি: ৫ কিলোওয়াট-ঘণ্টার LiFePO4 প্যাক প্রায় ৯৩,৫০০–১,৩০,০০০ টাকায় বিক্রি হয় (প্রতি কিলোওয়াট-ঘণ্টায় প্রায় ১৮,০০০–২৫,০০০ টাকা); বড় প্যাকে প্রতি ইউনিট খরচ কম। হাইব্রিড ইনভার্টার ও ইনস্টলেশনের বাড়তি খরচ আলাদা করা নেই। আসল কোটেশন দিয়ে প্রতিস্থাপন করুন।",
+    "solar_cost_per_kw_bdt": 70000,
+    "battery_cost_per_kwh_bdt": 22000
+  },
+
+  "roof": {
+    "label": "Roof and panel sizing",
+    "label_bn": "ছাদ ও প্যানেলের আকার",
     "source_url": null,
     "as_of": null,
     "verified": false,
-    "replaceable_by_quote": true,
-    "note": "Placeholder prices, not quotations. Replace with real installer quotes (payback depends heavily on them).",
-    "solar_cost_per_kw_bdt": 80000,
-    "battery_cost_per_kwh_bdt": 30000
+    "note": "Placeholder values. Confirm roof area per kW and the usable roof share with your installer or the panel datasheet.",
+    "note_bn": "অস্থায়ী মান। ইনস্টলার বা প্যানেলের ডেটাশিট থেকে প্রতি কিলোওয়াটে ছাদের জায়গা ও ব্যবহারযোগ্য অংশ যাচাই করুন।",
+    "usable_fraction": 0.70,
+    "area_per_kw_sqm": 5.5
   },
 
   "battery": {
     "label": "Battery assumptions",
+    "label_bn": "ব্যাটারির অনুমান",
     "source_url": null,
     "as_of": null,
     "verified": false,
     "note": "Typical placeholder values. Check the battery and inverter datasheets.",
+    "note_bn": "সাধারণ অস্থায়ী মান। ব্যাটারি ও ইনভার্টারের ডেটাশিট দেখে নিন।",
     "depth_of_discharge": 0.80,
     "inverter_efficiency": 0.90
   },
 
   "pvgis": {
     "label": "PVGIS solar data settings",
+    "label_bn": "PVGIS সৌর তথ্যের সেটিং",
     "source_url": "https://re.jrc.ec.europa.eu/pvg_tools/en/",
     "as_of": null,
     "verified": true,
-    "note": "Yield is fetched live from PVGIS. angle_degrees and aspect_degrees are null, so PVGIS defaults apply: set them (or use_optimal_angles) to match the real roof.",
+    "note": "Yield, including the month-by-month profile, is fetched live from PVGIS. angle_degrees and aspect_degrees are null, so PVGIS defaults apply: set them (or use_optimal_angles) to match the real roof.",
+    "note_bn": "মাসভিত্তিক উৎপাদনসহ সব তথ্য সরাসরি PVGIS থেকে আসে। কোণ ও দিক ফাঁকা থাকলে PVGIS-এর ডিফল্ট ধরা হয়; আসল ছাদ অনুযায়ী মান দিন।",
     "api_url": "https://re.jrc.ec.europa.eu/api/v5_3/PVcalc",
     "timeout_seconds": 30,
     "system_loss_percent": 14,
@@ -69,10 +103,23 @@
 
   "sizing": {
     "label": "System sizing target",
+    "label_bn": "সিস্টেম আকারের লক্ষ্য",
     "source_url": null,
     "as_of": null,
     "verified": true,
-    "note": "Design choice: share of average consumption the system is sized to offset.",
+    "note": "Design choice: the share of average consumption the system is sized to offset.",
+    "note_bn": "নকশার সিদ্ধান্ত: গড় ব্যবহারের কত অংশ পূরণ করতে সিস্টেমের আকার ঠিক করা হবে।",
     "target_offset_fraction": 1.0
+  },
+
+  "profile": {
+    "label": "Seasonal consumption pattern",
+    "label_bn": "মৌসুমি ব্যবহারের ধরন",
+    "source_url": null,
+    "as_of": null,
+    "verified": true,
+    "note": "Flat by default: every month uses the same energy. Edit the 12 factors (January to December) to reflect seasonal use, for example higher in summer. They are rescaled to average 1.",
+    "note_bn": "ডিফল্টে প্রতি মাসের ব্যবহার সমান ধরা হয়। মৌসুমি ব্যবহার (যেমন গ্রীষ্মে বেশি) অনুযায়ী জানুয়ারি থেকে ডিসেম্বরের ১২টি গুণক বদলান। গুণকগুলোর গড় ১ হিসেবে সমন্বয় করা হয়।",
+    "monthly_consumption_factors": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
   }
 }

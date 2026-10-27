@@ -57,6 +57,7 @@ def get_location_yield(location: str, cfg: dict | None = None) -> dict:
         "latitude": coordinates["latitude"],
         "longitude": coordinates["longitude"],
         "yearly_kwh_per_kw": resource["estimated_yearly_generation_kwh"],
+        "monthly_kwh_per_kw": resource.get("monthly_generation_kwh_per_kw"),
         "solar_resource": resource,
         "data_source": resource["data_source"],
     }

@@ -3,7 +3,11 @@ import io
 import re
 from pathlib import Path
 
+from functools import lru_cache
+
 from fpdf import FPDF
+
+from services.i18n import LIMITATION_BN, digits, fmt, month_name, t
 
 
 # ==========================================================
@@ -15,6 +19,29 @@ FONT_DIR = PROJECT_ROOT / "assets" / "fonts"
 
 REGULAR_FONT = FONT_DIR / "NotoSansBengali-Regular.ttf"
 BOLD_FONT = FONT_DIR / "NotoSansBengali-Bold.ttf"
+
+# Optional Latin fonts. Some Noto Sans Bengali builds contain Bengali
+# glyphs only (no English letters, ASCII digits or punctuation). When the
+# files below exist they are used for every glyph the Bengali font lacks.
+LATIN_REGULAR_FONT = FONT_DIR / "NotoSans-Regular.ttf"
+LATIN_BOLD_FONT = FONT_DIR / "NotoSans-Bold.ttf"
+
+# Characters the PDF needs from a Latin-capable font.
+_LATIN_PROBE = "Aa0.,-:|()"
+
+
+def _latin_fonts_available() -> bool:
+    return LATIN_REGULAR_FONT.is_file() and LATIN_BOLD_FONT.is_file()
+
+
+@lru_cache(maxsize=4)
+def _font_covers_latin(path: str) -> bool:
+    """True if the font has English letters, digits and punctuation."""
+
+    from fontTools.ttLib import TTFont
+
+    cmap = TTFont(path).getBestCmap()
+    return all(ord(ch) in cmap for ch in _LATIN_PROBE)
 
 
 def _validate_fonts():
@@ -32,6 +59,18 @@ def _validate_fonts():
             + "\n".join(missing)
             + "\nDownload Noto Sans Bengali Regular and Bold "
               "and place them in assets/fonts/."
+        )
+
+    # Without Latin glyphs, English text, numbers and punctuation would
+    # silently disappear from the PDF, so stop with a clear message.
+    if not _latin_fonts_available() and not _font_covers_latin(
+        str(REGULAR_FONT)
+    ):
+        raise RuntimeError(
+            "The PDF font has no Latin glyphs, so English text, digits "
+            "and punctuation would be missing. Add NotoSans-Regular.ttf "
+            "and NotoSans-Bold.ttf to assets/fonts/, or use a Noto Sans "
+            "Bengali build that includes Latin."
         )
 
 
@@ -61,87 +100,18 @@ def generate_solar_report(
         savings_label = "আনুমানিক মাসিক সঞ্চয়"
         payback_label = "আনুমানিক পে-ব্যাক সময়"
         years_unit = "বছর"
+        annual_savings_label = "আনুমানিক বার্ষিক সঞ্চয়"
+        surplus_paid_label = "উদ্বৃত্ত বিদ্যুৎ বাবদ বার্ষিক প্রাপ্তি"
+        net_metering_label = "নেট মিটারিং"
+        on_text, off_text = "চালু", "বন্ধ"
+        rate_text = "উদ্বৃত্তের হার প্রতি ইউনিট ৳{rate}"
 
         disclaimer = (
             "এটি একটি প্রাথমিক অনুমান। ইনস্টলেশনের আগে "
             "যোগ্য সোলার পেশাজীবীর মাধ্যমে যাচাই করুন।"
         )
 
-        limitation_translations = {
-            "Electricity consumption is estimated by inverting the BERC residential slab tariff; demand charges and other fees are not included.":
-                "বিদ্যুৎ ব্যবহার BERC আবাসিক স্ল্যাব ট্যারিফ থেকে "
-                "অনুমান করা হয়েছে; ডিমান্ড চার্জসহ অন্যান্য ফি ধরা হয়নি।",
-
-            "Roof capacity is estimated from an assumed panel area per kW and usable roof fraction (see the assumptions used).":
-                "ছাদের ধারণক্ষমতা প্রতি কিলোওয়াটে ধরা প্যানেলের জায়গা ও "
-                "ছাদের ব্যবহারযোগ্য অংশের অনুমানের ভিত্তিতে হিসাব করা হয়েছে।",
-
-            "Some assumptions are unverified or may be out of date; verify prices and tariffs before deciding.":
-                "কিছু অনুমান যাচাই করা হয়নি বা পুরোনো হতে পারে; সিদ্ধান্তের "
-                "আগে দাম ও ট্যারিফ যাচাই করুন।",
-
-            "Savings assume exported surplus has no cash value; only generation up to monthly consumption reduces the bill.":
-                "সঞ্চয়ের হিসাবে উদ্বৃত্ত বিদ্যুতের কোনো নগদ মূল্য ধরা হয়নি; "
-                "মাসিক ব্যবহার পর্যন্ত উৎপাদনই বিল কমায়।",
-
-            "Savings use average monthly figures; seasonal variation in consumption and generation is not modelled.":
-                "সঞ্চয় গড় মাসিক হিসাবে নির্ণয় করা হয়েছে; ব্যবহার ও "
-                "উৎপাদনের মৌসুমি তারতম্য ধরা হয়নি।",
-
-            "Payback ignores tariff changes, panel degradation, maintenance, financing, and battery replacement.":
-                "পে-ব্যাক হিসাবে ট্যারিফ পরিবর্তন, প্যানেলের ক্ষয়, "
-                "রক্ষণাবেক্ষণ, ঋণের সুদ ও ব্যাটারি প্রতিস্থাপন ধরা হয়নি।",
-
-            "The system size is limited by available roof area, so it will not cover all household consumption.":
-                "ছাদের জায়গা সীমিত হওয়ায় সিস্টেমের আকার সীমিত; এটি "
-                "পরিবারের পুরো বিদ্যুৎ ব্যবহার পূরণ করবে না।",
-
-            "The system is sized to cover average household consumption; the roof could hold a larger system.":
-                "সিস্টেমটি পরিবারের গড় বিদ্যুৎ ব্যবহার পূরণের জন্য নির্ধারিত; "
-                "ছাদে আরও বড় সিস্টেম বসানো সম্ভব।",
-
-            "Solar generation is estimated using PVGIS data for the resolved coordinates.":
-                "নির্ধারিত স্থানাঙ্কের জন্য PVGIS তথ্য ব্যবহার করে "
-                "সৌরবিদ্যুৎ উৎপাদন অনুমান করা হয়েছে।",
-
-            "Annual generation divided by 12 is an average, not a month-specific forecast.":
-                "বার্ষিক উৎপাদনকে ১২ দিয়ে ভাগ করে মাসিক গড় নির্ণয় "
-                "করা হয়েছে; এটি নির্দিষ্ট মাসের পূর্বাভাস নয়।",
-
-            "Roof shading, orientation, tilt, and structural suitability have not been inspected.":
-                "ছাদের ছায়া, দিক, ঢাল এবং কাঠামোগত উপযুক্ততা "
-                "সরেজমিনে পরীক্ষা করা হয়নি।",
-
-            "Electricity consumption is estimated using an assumed rate, not the actual tariff calculation.":
-                "প্রকৃত বিদ্যুৎ ট্যারিফ হিসাব না করে একটি "
-                "অনুমানভিত্তিক দর দিয়ে বিদ্যুৎ ব্যবহার নির্ণয় করা হয়েছে।",
-
-            "Equipment costs are illustrative, not verified current quotations.":
-                "সরঞ্জামের খরচ উদাহরণভিত্তিক; বর্তমান বাজারদরের "
-                "যাচাইকৃত কোটেশন নয়।",
-
-            "Actual output depends on installation and weather conditions.":
-                "প্রকৃত উৎপাদন স্থাপনার ধরন ও আবহাওয়ার ওপর নির্ভর করবে।",
-
-            "Solar generation uses assumed peak-sun hours and efficiency.":
-                "সৌরবিদ্যুৎ উৎপাদন নির্ধারণে অনুমানভিত্তিক "
-                "সান আওয়ার ও দক্ষতা ব্যবহার করা হয়েছে।",
-
-            "Roof suitability and shading have not been inspected.":
-                "ছাদের উপযুক্ততা ও ছায়ার অবস্থা পরীক্ষা করা হয়নি।",
-
-            "Electricity consumption is estimated from an assumed rate.":
-                "অনুমানভিত্তিক বিদ্যুৎদরের ভিত্তিতে বিদ্যুৎ ব্যবহার "
-                "নির্ণয় করা হয়েছে।",
-
-            "Equipment costs are illustrative, not current quotations.":
-                "সরঞ্জামের খরচ উদাহরণভিত্তিক, বর্তমান বাজারের "
-                "কোটেশন নয়।",
-
-            "Location coordinates are not yet used in solar generation.":
-                "সৌরবিদ্যুৎ উৎপাদনের হিসাবে এখনো অবস্থানের "
-                "স্থানাঙ্ক ব্যবহার করা হয়নি।",
-        }
+        limitation_translations = LIMITATION_BN
 
     else:
         title = "Bangla Solar AI — Solar Feasibility Report"
@@ -159,6 +129,11 @@ def generate_solar_report(
         savings_label = "Estimated monthly savings"
         payback_label = "Estimated payback period"
         years_unit = "years"
+        annual_savings_label = "Estimated annual savings"
+        surplus_paid_label = "Yearly payment for surplus power"
+        net_metering_label = "Net metering"
+        on_text, off_text = "On", "Off"
+        rate_text = "surplus paid at ৳{rate} per unit"
 
         disclaimer = (
             "This is a preliminary estimate. Consult a qualified "
@@ -207,11 +182,38 @@ def generate_solar_report(
             f"৳{savings['monthly_savings_bdt']:,.0f}"
         )
 
+        if savings.get("annual_savings_bdt") is not None:
+            lines.append(
+                f"- **{annual_savings_label}:** "
+                f"৳{savings['annual_savings_bdt']:,.0f}"
+            )
+
+        if savings.get("annual_payout_bdt"):
+            lines.append(
+                f"- **{surplus_paid_label}:** "
+                f"৳{savings['annual_payout_bdt']:,.0f}"
+            )
+
         if savings.get("payback_years") is not None:
             lines.append(
                 f"- **{payback_label}:** "
                 f"{savings['payback_years']:.1f} {years_unit}"
             )
+
+    net_info = result.get("net_metering_info")
+
+    if net_info:
+        status = on_text if net_info["enabled"] else off_text
+
+        if net_info["enabled"] and net_info.get("surplus_rate_bdt_per_kwh"):
+            status += (
+                " — "
+                + rate_text.format(
+                    rate=f"{net_info['surplus_rate_bdt_per_kwh']:g}"
+                )
+            )
+
+        lines.append(f"- **{net_metering_label}:** {status}")
 
     if battery:
         lines.append(
@@ -226,9 +228,10 @@ def generate_solar_report(
             f"- {limitation_translations.get(limitation, limitation)}"
         )
 
-    lines.extend(["", f"**Note:** {disclaimer}"])
+    note_label = "দ্রষ্টব্য" if language == "bn" else "Note"
+    lines.extend(["", f"**{note_label}:** {disclaimer}"])
 
-    return "\n".join(lines)
+    return digits(language, "\n".join(lines))
 
 
 # ==========================================================
@@ -238,12 +241,14 @@ def generate_solar_report(
 class SolarReportPDF(FPDF):
     """A4 report with Unicode fonts and Bangla text shaping."""
 
+    language = "en"
+
     def header(self):
         self.set_font("Noto", style="B", size=9)
         self.cell(
             0,
             7,
-            "Bangla Solar AI",
+            t(self.language, "pdf_brand"),
             new_x="LMARGIN",
             new_y="NEXT",
         )
@@ -266,7 +271,7 @@ class SolarReportPDF(FPDF):
         self.cell(
             0,
             6,
-            f"Bangla Solar AI - Preliminary estimates | Page {self.page_no()}",
+            t(self.language, "pdf_footer", n=self.page_no()),
             align="C",
         )
 
@@ -569,180 +574,214 @@ def _markdown_to_pdf(pdf, report):
 # ASSESSMENT SUMMARY
 # ==========================================================
 
+def _monthly_table(pdf, rows, lang):
+    """Compact 12-month table: use, solar, bill before/after, surplus paid."""
+
+    headers = [
+        t(lang, "pdf_col_month"),
+        t(lang, "pdf_col_use"),
+        t(lang, "pdf_col_solar"),
+        t(lang, "pdf_col_before"),
+        t(lang, "pdf_col_after"),
+        t(lang, "pdf_col_paid"),
+    ]
+
+    usable = pdf.w - pdf.l_margin - pdf.r_margin
+    widths = [usable * share for share in (0.20, 0.14, 0.14, 0.18, 0.18, 0.16)]
+    height = 6
+
+    def draw(cells, bold=False):
+        if pdf.get_y() + height > pdf.page_break_trigger:
+            pdf.add_page()
+
+        pdf.set_font("Noto", style="B" if bold else "", size=8)
+
+        for index, (width, text) in enumerate(zip(widths, cells)):
+            pdf.cell(
+                width,
+                height,
+                str(text),
+                border=1,
+                align="L" if index == 0 else "R",
+            )
+
+        pdf.ln(height)
+
+    draw(headers, bold=True)
+
+    for row in rows:
+        draw([
+            month_name(lang, row["month"]),
+            fmt(lang, row["consumption_kwh"], 0),
+            fmt(lang, row["generation_kwh"], 0),
+            fmt(lang, row["bill_before_bdt"], 0),
+            fmt(lang, row["bill_after_bdt"], 0),
+            fmt(lang, row["payout_bdt"], 0),
+        ])
+
+
 def _build_assessment_summary(
     pdf,
     assessment,
     inputs,
+    language="en",
 ):
     """Build the assessment summary before the detailed report."""
 
+    lang = language
     assessment = assessment or {}
     inputs = inputs or {}
+
+    def num(value, decimals=2):
+        if value is None:
+            return t(lang, "na")
+
+        return fmt(lang, value, decimals)
 
     generation = assessment.get("generation", {})
     cost = assessment.get("cost", {})
     electricity = assessment.get("electricity", {})
     energy = assessment.get("energy_assessment") or {}
+    savings = assessment.get("savings") or {}
+    net_info = assessment.get("net_metering_info") or {}
 
     capacity = assessment.get("solar_capacity_kw")
-    monthly_generation = generation.get(
-        "monthly_generation_kwh"
-    )
-
-    monthly_consumption = energy.get(
-        "monthly_consumption_kwh",
-        electricity.get("monthly_consumption_kwh"),
-    )
-
+    monthly_generation = generation.get("monthly_generation_kwh")
+    monthly_consumption = electricity.get("monthly_consumption_kwh")
     total_cost = cost.get("total_cost_bdt")
 
-    pdf.section_title("Your Solar Assessment", size=15)
+    kwh = t(lang, "kwh", n="{}")
+    kw = t(lang, "kw", n="{}")
+
+    pdf.section_title(t(lang, "pdf_summary"), size=15)
 
     summary_rows = [
-        (
-            "Solar Capacity",
-            (
-                f"{_format_number(capacity)} kW"
-                if capacity is not None
-                else "Not available"
-            ),
-        ),
-        (
-            "Monthly Generation",
-            (
-                f"{_format_number(monthly_generation)} kWh"
-                if monthly_generation is not None
-                else "Not available"
-            ),
-        ),
-        (
-            "Estimated Cost",
-            (
-                f"BDT {_format_number(total_cost, 0)}"
-                if total_cost is not None
-                else "Not available"
-            ),
-        ),
-        (
-            "Monthly Consumption",
-            (
-                f"{_format_number(monthly_consumption)} kWh"
-                if monthly_consumption is not None
-                else "Not available"
-            ),
-        ),
+        (t(lang, "pdf_capacity"), kw.format(num(capacity))),
+        (t(lang, "pdf_generation"), kwh.format(num(monthly_generation))),
+        (t(lang, "pdf_cost"), f"৳{num(total_cost, 0)}"),
+        (t(lang, "pdf_consumption"), kwh.format(num(monthly_consumption))),
     ]
 
-    savings = assessment.get("savings") or {}
-
     if savings.get("monthly_savings_bdt") is not None:
-        summary_rows.append((
-            "Monthly Savings",
-            f"BDT {_format_number(savings['monthly_savings_bdt'], 0)}",
-        ))
+        summary_rows.append(
+            (t(lang, "pdf_savings"), f"৳{num(savings['monthly_savings_bdt'], 0)}")
+        )
+        summary_rows.append(
+            (t(lang, "pdf_annual_savings"), f"৳{num(savings['annual_savings_bdt'], 0)}")
+        )
+
+    if savings.get("annual_payout_bdt"):
+        summary_rows.append(
+            (t(lang, "pdf_surplus_paid"), f"৳{num(savings['annual_payout_bdt'], 0)}")
+        )
 
     if savings.get("payback_years") is not None:
-        summary_rows.append((
-            "Simple Payback",
-            f"{_format_number(savings['payback_years'], 1)} years",
-        ))
+        summary_rows.append(
+            (
+                t(lang, "pdf_payback"),
+                t(lang, "years", n=savings["payback_years"]).replace(
+                    str(savings["payback_years"]),
+                    num(savings["payback_years"], 1),
+                ),
+            )
+        )
 
     for label, value in summary_rows:
         pdf.bordered_key_value(label, value)
 
+    # ---- month by month ----
+    monthly = assessment.get("monthly") or []
+
+    if monthly:
+        pdf.ln(3)
+        pdf.section_title(t(lang, "pdf_monthly"), size=12)
+        _monthly_table(pdf, monthly, lang)
+
+    # ---- energy ----
     pdf.ln(3)
-    pdf.section_title("Energy Assessment", size=12)
+    pdf.section_title(t(lang, "pdf_energy"), size=12)
 
     if monthly_generation is not None:
         pdf.key_value(
-            "Estimated Monthly Solar Generation",
-            f"{_format_number(monthly_generation)} kWh",
+            t(lang, "pdf_est_gen"), kwh.format(num(monthly_generation))
         )
 
     if monthly_consumption is not None:
         pdf.key_value(
-            "Estimated Monthly Consumption",
-            f"{_format_number(monthly_consumption)} kWh",
+            t(lang, "pdf_est_cons"), kwh.format(num(monthly_consumption))
         )
 
-    surplus = energy.get("monthly_surplus_kwh")
-    shortfall = energy.get("monthly_shortfall_kwh")
+    # Same status the app shows (with its 5% balance tolerance).
+    status = energy.get("status")
 
-    if surplus is not None:
+    if status == "potential_surplus":
         pdf.key_value(
-            "Estimated Monthly Surplus",
-            f"{_format_number(surplus)} kWh",
+            t(lang, "pdf_surplus"),
+            kwh.format(num(energy.get("monthly_surplus_kwh"))),
         )
-
-    elif shortfall is not None:
+    elif status == "potential_shortfall":
         pdf.key_value(
-            "Estimated Monthly Shortfall",
-            f"{_format_number(shortfall)} kWh",
+            t(lang, "pdf_shortfall"),
+            kwh.format(num(energy.get("monthly_shortfall_kwh"))),
         )
-
-    elif (
-        monthly_generation is not None
-        and monthly_consumption is not None
-    ):
-        difference = (
-            float(monthly_generation)
-            - float(monthly_consumption)
-        )
-
-        label = (
-            "Estimated Monthly Surplus"
-            if difference >= 0
-            else "Estimated Monthly Shortfall"
-        )
-
+    elif status == "approximately_balanced":
         pdf.key_value(
-            label,
-            f"{_format_number(abs(difference))} kWh",
+            t(lang, "pdf_balance"), t(lang, "pdf_balanced")
         )
 
+    # ---- inputs ----
     pdf.ln(3)
-    pdf.section_title("Assessment Details", size=12)
+    pdf.section_title(t(lang, "pdf_details"), size=12)
 
     details = [
-        ("Location", inputs.get("location")),
+        (t(lang, "pdf_location"), inputs.get("location")),
         (
-            "Monthly Electricity Bill",
-            (
-                f"BDT {_format_number(inputs['monthly_bill_bdt'], 0)}"
-                if inputs.get("monthly_bill_bdt") is not None
-                else None
-            ),
+            t(lang, "pdf_bill"),
+            f"৳{num(inputs['monthly_bill_bdt'], 0)}"
+            if inputs.get("monthly_bill_bdt") is not None
+            else None,
         ),
         (
-            "Roof Area",
-            (
-                f"{_format_number(inputs['roof_area_sqm'])} m²"
-                if inputs.get("roof_area_sqm") is not None
-                else None
-            ),
+            t(lang, "pdf_roof"),
+            f"{num(inputs['roof_area_sqm'])} m²"
+            if inputs.get("roof_area_sqm") is not None
+            else None,
         ),
         (
-            "Battery Backup",
-            (
-                "Required"
-                if inputs.get("needs_battery")
-                else "Not required"
-            ) if inputs.get("needs_battery") is not None else None,
+            t(lang, "pdf_load"),
+            kw.format(num(net_info["sanctioned_load_kw"]))
+            if net_info.get("sanctioned_load_kw") is not None
+            else None,
+        ),
+        (
+            t(lang, "pdf_net_metering"),
+            t(lang, "pdf_on" if net_info.get("enabled") else "pdf_off")
+            if net_info
+            else None,
+        ),
+        (
+            t(lang, "pdf_battery"),
+            t(lang, "pdf_required" if inputs.get("needs_battery") else "pdf_not_required")
+            if inputs.get("needs_battery") is not None
+            else None,
         ),
     ]
 
     if inputs.get("needs_battery"):
         if inputs.get("backup_load_kw") is not None:
-            details.append((
-                "Backup Load",
-                f"{_format_number(inputs['backup_load_kw'])} kW",
-            ))
+            details.append(
+                (t(lang, "pdf_backup_load"), kw.format(num(inputs["backup_load_kw"])))
+            )
 
         if inputs.get("backup_hours") is not None:
-            details.append((
-                "Backup Duration",
-                f"{_format_number(inputs['backup_hours'])} hours",
-            ))
+            details.append(
+                (
+                    t(lang, "pdf_backup_hours"),
+                    t(lang, "pdf_hours", n=0).replace(
+                        digits(lang, "0"), num(inputs["backup_hours"])
+                    ),
+                )
+            )
 
     for label, value in details:
         if value is not None:
@@ -757,7 +796,7 @@ def _build_assessment_summary(
     )
     pdf.ln(3)
 
-    pdf.section_title("Feasibility Report", size=12)
+    pdf.section_title(t(lang, "pdf_report"), size=12)
 
 
 # ==========================================================
@@ -768,6 +807,7 @@ def generate_solar_report_pdf(
     report: str,
     assessment: dict | None = None,
     assessment_inputs: dict | None = None,
+    language: str = "en",
 ) -> bytes:
     """
     Generate an A4 PDF containing:
@@ -815,6 +855,16 @@ def generate_solar_report_pdf(
         fname=str(BOLD_FONT),
     )
 
+    # Latin fallback for glyphs the Bengali font does not contain.
+    if _latin_fonts_available():
+        pdf.add_font(
+            family="NotoLatin", style="", fname=str(LATIN_REGULAR_FONT)
+        )
+        pdf.add_font(
+            family="NotoLatin", style="B", fname=str(LATIN_BOLD_FONT)
+        )
+        pdf.set_fallback_fonts(["NotoLatin"], exact_match=True)
+
     # Enable HarfBuzz shaping for Bangla conjuncts and vowel signs.
     pdf.set_text_shaping(
         use_shaping_engine=True,
@@ -822,9 +872,9 @@ def generate_solar_report_pdf(
         language="ben",
     )
 
-    pdf.set_title(
-        "Bangla Solar AI - Solar Feasibility Report"
-    )
+    pdf.language = language
+
+    pdf.set_title(t(language, "pdf_title"))
     pdf.set_author("Bangla Solar AI")
 
     pdf.add_page()
@@ -833,6 +883,7 @@ def generate_solar_report_pdf(
         pdf=pdf,
         assessment=assessment,
         inputs=assessment_inputs,
+        language=language,
     )
 
     _markdown_to_pdf(

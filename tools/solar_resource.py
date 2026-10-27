@@ -66,12 +66,31 @@ def get_solar_resource(
             "The solar API returned an unexpected response."
         ) from error
 
+    # Month-by-month profile for 1 kW (January to December). If PVGIS
+    # does not return it, callers fall back to a flat year.
+    monthly_profile = None
+
+    try:
+        rows = sorted(
+            data["outputs"]["monthly"]["fixed"],
+            key=lambda row: row["month"],
+        )
+        values = [float(row["E_m"]) for row in rows]
+
+        if len(values) == 12 and sum(values) > 0:
+            # Scale so the months add up to the yearly total exactly.
+            scale = yearly_energy / sum(values)
+            monthly_profile = [round(v * scale, 2) for v in values]
+    except (KeyError, TypeError, ValueError):
+        monthly_profile = None
+
     return {
         "latitude": latitude,
         "longitude": longitude,
         "system_capacity_kw": 1.0,
         "estimated_yearly_generation_kwh": round(yearly_energy, 2),
         "estimated_monthly_generation_kwh": round(monthly_energy, 2),
+        "monthly_generation_kwh_per_kw": monthly_profile,
         "system_loss_percent": settings["system_loss_percent"],
         "data_source": "European Commission PVGIS",
         "is_estimate": True,

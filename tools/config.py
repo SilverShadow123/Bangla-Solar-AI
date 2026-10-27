@@ -18,11 +18,15 @@ DEFAULT_PATH = PROJECT_ROOT / "data" / "assumptions.json"
 # Keys that describe a section rather than being calculation inputs.
 META_KEYS = {
     "label",
+    "label_bn",
     "basis",
     "source_url",
+    "cross_check_url",
     "as_of",
     "verified",
+    "estimate",
     "note",
+    "note_bn",
     "replaceable_by_quote",
 }
 
@@ -31,7 +35,9 @@ ALLOWED_OVERRIDES = {
     "costs.solar_cost_per_kw_bdt": (1, 10_000_000),
     "costs.battery_cost_per_kwh_bdt": (1, 10_000_000),
     "tariff.vat_rate": (0, 1),
-    "tariff.demand_charge_bdt": (0, 100_000),
+    "tariff.sanctioned_load_kw": (0.1, 50),
+    "tariff.demand_charge_per_kw_bdt": (0, 1_000),
+    "net_metering.standard_surplus_rate_bdt_per_kwh": (0, 100),
     "roof.area_per_kw_sqm": (2, 30),
     "roof.usable_fraction": (0.05, 1),
     "sizing.target_offset_fraction": (0.05, 1),
@@ -47,7 +53,18 @@ REQUIRED_KEYS = {
         "lifeline_rate_bdt",
         "slabs",
         "vat_rate",
-        "demand_charge_bdt",
+        "demand_charge_per_kw_bdt",
+        "sanctioned_load_kw",
+    ],
+    "net_metering": [
+        "enabled_by_default",
+        "settlement_months",
+        "standard_surplus_rate_bdt_per_kwh",
+        "incentive_rate_bdt_per_kwh",
+        "incentive_requires_battery",
+        "incentive_install_deadline",
+        "incentive_valid_until",
+        "max_capacity_fraction_of_sanctioned_load",
     ],
     "roof": ["usable_fraction", "area_per_kw_sqm"],
     "costs": ["solar_cost_per_kw_bdt", "battery_cost_per_kwh_bdt"],
@@ -61,6 +78,7 @@ REQUIRED_KEYS = {
         "use_optimal_angles",
     ],
     "sizing": ["target_offset_fraction"],
+    "profile": ["monthly_consumption_factors"],
 }
 
 
@@ -88,6 +106,7 @@ def _validate(data: dict, path: Path) -> None:
                     f"{where}: missing '{key}' in section '{section}'."
                 )
 
+    # ---- tariff slabs ----
     slabs = data["tariff"]["slabs"]
 
     if not isinstance(slabs, list) or not slabs:
@@ -98,7 +117,11 @@ def _validate(data: dict, path: Path) -> None:
     for index, slab in enumerate(slabs):
         is_last = index == len(slabs) - 1
 
-        if not isinstance(slab, dict) or "up_to_kwh" not in slab or "rate_bdt" not in slab:
+        if (
+            not isinstance(slab, dict)
+            or "up_to_kwh" not in slab
+            or "rate_bdt" not in slab
+        ):
             raise AssumptionsError(
                 f"{where}: each slab needs 'up_to_kwh' and 'rate_bdt'."
             )
@@ -121,6 +144,43 @@ def _validate(data: dict, path: Path) -> None:
                 )
 
             previous = upper
+
+    # ---- seasonal consumption profile ----
+    factors = data["profile"]["monthly_consumption_factors"]
+
+    if (
+        not isinstance(factors, list)
+        or len(factors) != 12
+        or any(
+            not isinstance(f, (int, float)) or f <= 0 for f in factors
+        )
+    ):
+        raise AssumptionsError(
+            f"{where}: profile.monthly_consumption_factors must be "
+            "12 positive numbers (January to December)."
+        )
+
+    # ---- net metering ----
+    net = data["net_metering"]
+    months = net["settlement_months"]
+
+    if (
+        not isinstance(months, list)
+        or not months
+        or any(not isinstance(m, int) or not 1 <= m <= 12 for m in months)
+    ):
+        raise AssumptionsError(
+            f"{where}: net_metering.settlement_months must be a list of "
+            "month numbers from 1 to 12."
+        )
+
+    for key in ("incentive_install_deadline", "incentive_valid_until"):
+        try:
+            date.fromisoformat(net[key])
+        except (TypeError, ValueError) as error:
+            raise AssumptionsError(
+                f"{where}: net_metering.{key} must be a YYYY-MM-DD date."
+            ) from error
 
 
 @lru_cache(maxsize=4)
@@ -205,18 +265,31 @@ def _sections(cfg: dict):
             yield name, section
 
 
-def data_warnings(cfg: dict, today: date | None = None) -> list[str]:
-    """Plain-language warnings about unverified or out-of-date data."""
+def data_warning_items(cfg: dict, today: date | None = None) -> list[dict]:
+    """Structured warnings about unverified, estimated or out-of-date data.
+
+    Each item has a `code` ("unverified", "estimate", "stale", "bad_date")
+    so the UI can word it in any language.
+    """
 
     today = today or date.today()
     max_age = cfg["max_age_days"]
     overrides = cfg.get("_overrides", {})
-    warnings = []
+    items = []
 
     for name, section in _sections(cfg):
         label = section.get("label", name)
         note = section.get("note", "")
-        source = section.get("source_url")
+
+        base = {
+            "section": name,
+            "label": label,
+            "label_bn": section.get("label_bn") or label,
+            "note": note,
+            "note_bn": section.get("note_bn") or note,
+            "as_of": section.get("as_of"),
+            "source_url": section.get("source_url"),
+        }
 
         # A section a real quote can replace is fine once every one of
         # its values has been supplied by the user.
@@ -227,8 +300,11 @@ def data_warnings(cfg: dict, today: date | None = None) -> list[str]:
                 continue
 
         if section.get("verified") is False:
-            warnings.append(f"Unverified: {label}. {note}".strip())
+            items.append({**base, "code": "unverified"})
             continue
+
+        if section.get("estimate"):
+            items.append({**base, "code": "estimate"})
 
         as_of = section.get("as_of")
 
@@ -236,20 +312,43 @@ def data_warnings(cfg: dict, today: date | None = None) -> list[str]:
             try:
                 age = (today - date.fromisoformat(as_of)).days
             except ValueError:
-                warnings.append(
-                    f"Unreadable date for {label} ('{as_of}'); "
-                    "use YYYY-MM-DD."
-                )
+                items.append({**base, "code": "bad_date"})
                 continue
 
             if age > max_age:
-                hint = f" Check {source}." if source else ""
-                warnings.append(
-                    f"Out of date: {label} is {age} days old "
-                    f"(as of {as_of}).{hint}"
-                )
+                items.append({**base, "code": "stale", "age_days": age})
 
-    return warnings
+    return items
+
+
+def format_warning(item: dict) -> str:
+    """English one-line text for a warning item (used for the agent)."""
+
+    code = item["code"]
+
+    if code == "unverified":
+        return f"Unverified: {item['label']}. {item['note']}".strip()
+
+    if code == "estimate":
+        return f"Market estimate: {item['label']}. {item['note']}".strip()
+
+    if code == "stale":
+        hint = f" Check {item['source_url']}." if item.get("source_url") else ""
+        return (
+            f"Out of date: {item['label']} is {item['age_days']} days old "
+            f"(as of {item['as_of']}).{hint}"
+        )
+
+    return (
+        f"Unreadable date for {item['label']} ('{item['as_of']}'); "
+        "use YYYY-MM-DD."
+    )
+
+
+def data_warnings(cfg: dict, today: date | None = None) -> list[str]:
+    """Plain-language English warnings."""
+
+    return [format_warning(item) for item in data_warning_items(cfg, today)]
 
 
 def assumptions_summary(cfg: dict, today: date | None = None) -> dict:
@@ -261,32 +360,28 @@ def assumptions_summary(cfg: dict, today: date | None = None) -> dict:
     for name, section in _sections(cfg):
         sources[name] = {
             "label": section.get("label", name),
+            "label_bn": section.get("label_bn") or section.get("label", name),
             "as_of": section.get("as_of"),
             "verified": section.get("verified"),
+            "estimate": section.get("estimate", False),
             "source_url": section.get("source_url"),
             "note": section.get("note"),
+            "note_bn": section.get("note_bn"),
         }
 
         for key, value in section.items():
             if key in META_KEYS:
                 continue
 
-            if key == "slabs":
-                value = "; ".join(
-                    (
-                        f"up to {s['up_to_kwh']} kWh: {s['rate_bdt']}"
-                        if s["up_to_kwh"] is not None
-                        else f"above: {s['rate_bdt']}"
-                    )
-                    for s in value
-                )
-
             values[f"{name}.{key}"] = value
+
+    items = data_warning_items(cfg, today)
 
     return {
         "tariff_basis": cfg["tariff"]["basis"],
         "values": values,
         "sources": sources,
         "overrides": dict(cfg.get("_overrides", {})),
-        "warnings": data_warnings(cfg, today),
+        "warning_items": items,
+        "warnings": [format_warning(item) for item in items],
     }

@@ -28,15 +28,28 @@ def format_message_content(content):
     return str(content)
 
 
-def build_assessment_context(assessment, inputs):
+LANGUAGE_HINT = {
+    "bn": (
+        "UI LANGUAGE: Bangla. Reply in Bangla (Bengali script) unless "
+        "the user writes in English. Write numbers with Bengali digits "
+        "when replying in Bangla."
+    ),
+    "en": "",
+}
+
+
+def build_assessment_context(assessment, inputs, language="en"):
     """Render the app's current assessment as text for the agent.
 
     This is what lets the chat answer questions about "my system" using
     exactly the numbers shown in the app, instead of recalculating.
+    `language` is the app's UI language ("en" or "bn").
     """
 
+    hint = LANGUAGE_HINT.get(language, "")
+
     if not assessment:
-        return ""
+        return hint
 
     inputs = inputs or {}
     generation = assessment["generation"]
@@ -77,7 +90,8 @@ def build_assessment_context(assessment, inputs):
             f"solar {values.get('costs.solar_cost_per_kw_bdt')} BDT/kW, "
             f"battery {values.get('costs.battery_cost_per_kwh_bdt')} BDT/kWh, "
             f"VAT {values.get('tariff.vat_rate')}, "
-            f"demand charge {values.get('tariff.demand_charge_bdt')} BDT/month, "
+            f"sanctioned load {values.get('tariff.sanctioned_load_kw')} kW "
+            f"x {values.get('tariff.demand_charge_per_kw_bdt')} BDT/kW demand charge, "
             f"roof {values.get('roof.area_per_kw_sqm')} m2/kW, "
             f"tariff: {assumptions.get('tariff_basis')}"
         )
@@ -88,6 +102,16 @@ def build_assessment_context(assessment, inputs):
         f"- User overrides in effect: {overrides}" if overrides
         else "- User overrides in effect: none (stored defaults used)"
     )
+
+    net = assessment.get("net_metering_info") or {}
+
+    if net:
+        lines.append(
+            f"- Net metering: {'on' if net.get('enabled') else 'off'}; "
+            f"surplus rate {net.get('surplus_rate_bdt_per_kwh')} BDT/kWh"
+            f"{' (battery incentive applies)' if net.get('incentive_eligible') else ''}; "
+            f"system within sanctioned load: {net.get('within_sanctioned_load')}"
+        )
 
     for warning in assumptions.get("warnings") or []:
         lines.append(f"- Data warning: {warning}")
@@ -100,9 +124,11 @@ def build_assessment_context(assessment, inputs):
 
     if savings:
         lines.append(
-            f"- Monthly bill: {savings['monthly_bill_before_bdt']} BDT "
-            f"before solar, {savings['monthly_bill_after_bdt']} BDT after; "
-            f"savings {savings['monthly_savings_bdt']} BDT/month"
+            f"- Average monthly bill: {savings['monthly_bill_before_bdt']} "
+            f"BDT before solar, {savings['monthly_bill_after_bdt']} BDT "
+            f"after (net of surplus payments); savings "
+            f"{savings['monthly_savings_bdt']} BDT/month, "
+            f"{savings['annual_savings_bdt']} BDT/year"
         )
         lines.append(
             "- Simple payback: "
@@ -123,6 +149,9 @@ def build_assessment_context(assessment, inputs):
         "- If there are data warnings, mention that prices or "
         "tariffs are unverified when giving cost or payback figures.",
     ])
+
+    if hint:
+        lines.extend(["", hint])
 
     return "\n".join(lines)
 

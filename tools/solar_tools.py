@@ -29,6 +29,7 @@ def assess_solar_tool(
     backup_load_kw: float = 0.5,
     backup_hours: float = 4.0,
     assumption_overrides: dict | None = None,
+    net_metering: bool = True,
 ) -> dict:
     """Run the full rooftop solar feasibility assessment.
 
@@ -41,6 +42,9 @@ def assess_solar_tool(
     assumption_overrides: optional dict replacing stored assumptions,
     such as the user's own installer quote. Allowed keys: battery.depth_of_discharge, battery.inverter_efficiency, costs.battery_cost_per_kwh_bdt, costs.solar_cost_per_kw_bdt, pvgis.system_loss_percent, roof.area_per_kw_sqm, roof.usable_fraction, sizing.target_offset_fraction, tariff.demand_charge_bdt, tariff.vat_rate.
     If the current assessment lists user overrides, pass the same ones.
+    net_metering: whether the household will use net metering (credit
+    and payment for surplus power). The result includes month-by-month
+    generation, bills before and after solar, and payback.
     """
 
     return _safe(
@@ -52,6 +56,7 @@ def assess_solar_tool(
         backup_load_kw=backup_load_kw,
         backup_hours=backup_hours,
         overrides=assumption_overrides,
+        use_net_metering=net_metering,
     )
 
 
@@ -137,10 +142,12 @@ def savings_payback_tool(
     monthly_generation_kwh: float,
     solar_cost_bdt: float,
     battery_cost_bdt: float = 0.0,
+    net_metering: bool = True,
 ) -> dict:
-    """Estimate monthly bill savings and simple payback in years from
-    monthly consumption, monthly solar generation and system cost,
-    under the BERC residential slab tariff."""
+    """Estimate bill savings and simple payback in years from average
+    monthly consumption, average monthly solar generation and system
+    cost, under the BERC residential slab tariff and net metering. For a
+    full month-by-month answer use assess_solar_tool instead."""
 
     return _safe(
         calculate_savings_and_payback,
@@ -148,6 +155,7 @@ def savings_payback_tool(
         monthly_generation_kwh=monthly_generation_kwh,
         solar_cost_bdt=solar_cost_bdt,
         battery_cost_bdt=battery_cost_bdt,
+        net_metering=net_metering,
     )
 
 

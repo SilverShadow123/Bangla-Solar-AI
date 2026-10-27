@@ -12,6 +12,14 @@ def _cfg(cfg):
     return cfg if cfg is not None else resolve_assumptions()
 
 
+def demand_charge(cfg: dict | None = None) -> float:
+    """Fixed monthly demand charge: rate per kW x sanctioned load."""
+
+    tariff = _cfg(cfg)["tariff"]
+
+    return tariff["demand_charge_per_kw_bdt"] * tariff["sanctioned_load_kw"]
+
+
 def energy_charge(monthly_kwh: float, cfg: dict | None = None) -> float:
     """Energy charge in BDT for a month's consumption (before VAT)."""
 
@@ -52,8 +60,9 @@ def bill_for_kwh(monthly_kwh: float, cfg: dict | None = None) -> float:
     cfg = _cfg(cfg)
     tariff = cfg["tariff"]
 
+    # VAT applies to the energy charge plus the demand charge.
     return (
-        energy_charge(monthly_kwh, cfg) + tariff["demand_charge_bdt"]
+        energy_charge(monthly_kwh, cfg) + demand_charge(cfg)
     ) * (1 + tariff["vat_rate"])
 
 
@@ -67,7 +76,8 @@ def calculate_bill(monthly_kwh: float, cfg: dict | None = None) -> dict:
     return {
         "monthly_consumption_kwh": round(monthly_kwh, 2),
         "energy_charge_bdt": round(energy_charge(monthly_kwh, cfg), 2),
-        "demand_charge_bdt": tariff["demand_charge_bdt"],
+        "demand_charge_bdt": demand_charge(cfg),
+        "sanctioned_load_kw": tariff["sanctioned_load_kw"],
         "vat_rate": tariff["vat_rate"],
         "total_bill_bdt": round(total, 2),
         "effective_rate_bdt_per_kwh": (
